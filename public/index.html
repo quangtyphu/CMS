@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>CMS - Website 2 cột</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <!-- Sidebar bên trái -->
+  <div class="sidebar">
+    <h2>Menu</h2>
+    <a onclick="loadPage('home.html')">Trang chủ</a>
+    <a onclick="loadPage('accounts.html')">Quản lý tài khoản</a>
+    <a onclick="loadPage('QuanLyLC79_All.html')">Quản Lý LC79 </a>
+    <a onclick="loadPage('LoginLC79.html')">Login LC79</a>
+    <a onclick="loadPage('transactions_lc79.html')">Thống Kê Cược LC79</a>
+    <a onclick="loadPage('soduTK.html')">Số Dư Tài Khoản</a>
+  </div>
+
+  <!-- Nội dung bên phải -->
+  <div class="content">
+    <iframe id="mainFrame" src="home.html"></iframe>
+  </div>
+
+  <script>
+    function loadPage(page) {
+      document.getElementById("mainFrame").src = page;
+    }
+  </script>
+</body>
+</html>

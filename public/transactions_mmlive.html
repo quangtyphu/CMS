@@ -1,0 +1,455 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8">
+  <title>Quản Lý Thiết Bị</title>
+  <style>
+    body { font-family: Arial, sans-serif; margin: 20px; }
+    h2 { margin-bottom: 15px; }
+    table { width: 100%; border-collapse: collapse; margin-top: 20px; }
+    th, td { border: 1px solid #ddd; padding: 8px; text-align: center; }
+    th { background: #3498db; color: #fff; }
+    input { padding: 5px; }
+    select { padding: 5px; }
+    button { padding: 6px 12px; margin-top: 5px; }
+    #transactionTable input[type="number"] {
+      width: 90px;
+      box-sizing: border-box;
+    }
+
+    /* Tổng cược (đã có) */
+    .editable-number {
+      border-bottom: 1px dashed #3498db;  /* gạch chân xanh */
+      color: #3498db;
+      cursor: pointer;
+      padding: 2px 4px;
+      display: inline-block;
+      min-width: 50px;
+      text-align: center;
+    }
+
+    /* Thêm cho Thiết bị & Đã cược */
+    .editable-device,
+    .editable-currentbet {
+      border-bottom: 1px dashed #3498db;  /* gạch chân xanh */
+      color: #3498db;
+      cursor: pointer;
+      padding: 2px 4px;
+      display: inline-block;
+      min-width: 50px;
+      text-align: center;
+    }
+
+    .editable-input {
+      width: 70px;
+      text-align: center;
+    }
+    .status-select.playing {
+      background-color: #2ecc71; /* xanh lá */
+      color: white;
+      font-weight: bold;
+    }
+    #refreshBtn {
+      background-color: #3498db;  /* xanh dương */
+      color: #fff;
+      border: none;
+      padding: 8px 16px;
+      border-radius: 5px;
+      cursor: pointer;
+      font-weight: bold;
+      margin-bottom: 15px;
+    }
+    .game-option {
+      padding: 5px 10px;
+      cursor: pointer;
+      display: block;
+      color: #333;
+    }
+    .status-select.done {
+      background-color: #e74c3c; /* đỏ */
+      color: white;
+      font-weight: bold;
+    }
+
+    .game-option:hover {
+      background: #3498db;
+      color: #fff;
+    }
+
+    #refreshBtn:hover {
+      background-color: #2980b9; /* xanh đậm hơn khi hover */
+    }
+
+  </style>
+</head>
+<body>
+  <h2>Quản Lý Giao Dịch</h2>
+  <button id="refreshBtn" onclick="location.reload()">🔄 Refresh</button>
+  <table id="transactionTable">
+    <thead>
+      <tr>
+        <th>Tên đăng nhập</th>
+        <th style="position: relative;">
+          Game 
+          <!-- <span id="gameFilterWrapper" style="position: relative; display: inline-block; margin-left: 4px;">
+            <span id="gameFilterIcon" style="cursor:pointer;">⚙️</span>
+            <div id="gameFilterMenu" 
+                style="display:none; position:absolute; top:20px; left:0; background:#fff; border:1px solid #ccc; padding:5px; z-index:1000;">
+              <div class="game-option" data-value="">Tất cả</div>
+              <div class="game-option" data-value="MMLIVE">MMLIVE</div>
+              <div class="game-option" data-value="LC79">LC79</div>
+            </div>
+          </span> -->
+        </th>
+        <th>Ngân hàng / STK</th>
+        <th>Thiết bị</th>
+        <th>Tổng nạp</th>
+        <th>Tổng rút</th>
+        <th>Nạp Ngày</th>
+        <th>Nạp Tuần</th>
+        <th>Rút Ngày</th>
+        <th>Rút Tuần</th>
+        <th>Tổng Cược</th>
+        <th>Đã cược</th>
+        <th>Nạp Tiền</th>
+        <th>Rút tiền</th>
+        <th>Trạng thái</th>
+      </tr>
+    </thead>
+
+    <tbody></tbody>
+  </table>
+  </table>
+
+  <!-- ===== BẢNG LỊCH SỬ GIAO DỊCH ===== -->
+  <h2>Lịch Sử Giao Dịch</h2>
+  <table id="historyTable">
+    <thead>
+      <tr>
+        <th>Tên đăng nhập</th>
+        <th>Thiết bị</th>
+        <th>Số tiền</th>
+        <th>Hình thức</th>
+        <th>Thời gian</th>
+      </tr>
+    </thead>
+    <tbody></tbody>
+  </table>
+<script>
+  // ================== TẢI DANH SÁCH DEVICE ==================
+  let allDevices = [];
+  async function loadDevices() {
+    try {
+      const res = await fetch("/api/device-balances");
+      allDevices = await res.json();
+      console.log("📦 Devices đã load:", allDevices);
+    } catch (err) {
+      console.error("Lỗi khi load devices:", err);
+      allDevices = [];
+    }
+  }
+
+  // ================== TẢI DANH SÁCH TÀI KHOẢN ==================
+  let selectedGame = "MMLIVE";
+  async function loadTransactions() {
+    const res = await fetch("/api/accounts/with-stats");
+    const data = await res.json();
+    const tbody = document.querySelector("#transactionTable tbody");
+    tbody.innerHTML = "";
+
+    data
+      .filter(tran => !selectedGame || (tran.game || '').toUpperCase() === selectedGame)
+      .forEach(tran => {
+        tbody.innerHTML += `
+          <tr>
+            <td>${tran.username}</td>
+            <td>${tran.game || ''}</td>
+            <td>${(tran.bank || '') + (tran.bank && tran.accountNumber ? ' / ' : '') + (tran.accountNumber || '')}</td>
+            <td>
+              <span class="editable-device" data-username="${tran.username}">
+                ${tran.device || '---'}
+              </span>
+            </td>
+            <td>${tran.totalDeposit}</td>
+            <td>${tran.totalWithdraw}</td>
+            <td>${tran.todayDeposit || 0}</td>
+            <td>${tran.weekDeposit || 0}</td>
+            <td>${tran.todayWithdraw || 0}</td>
+            <td>${tran.weekWithdraw || 0}</td>
+            <td>
+              <span class="editable-number" data-username="${tran.username}">
+                ${tran.totalBet || 0}
+              </span>
+            </td>
+            <td>
+              <span class="editable-currentbet" data-username="${tran.username}">
+                ${tran.currentBet || 0}
+              </span>
+            </td>
+            <td>
+              <select id="depositDevice-${tran.username}" class="device-select">
+                <option value="">--Device--</option>
+              </select>
+              <input type="number" id="deposit-${tran.username}" placeholder="Nhập số">
+              <button onclick="deposit('${tran.username}')">Nhập</button>
+            </td>
+            <td>
+              <input type="number" id="withdraw-${tran.username}" placeholder="Nhập số">
+              <button onclick="withdraw('${tran.username}')">Nhập</button>
+            </td>
+            <td>
+              <select 
+                class="status-select 
+                  ${tran.status === "Đang Chơi" ? "playing" : ""} 
+                  ${tran.status === "Xong" ? "done" : ""}" 
+                onchange="updateStatus('${tran.username}', this.value)">
+                <option ${tran.status === "Đang Chơi" ? "selected" : ""}>Đang Chơi</option>
+                <option ${tran.status === "Đã Nạp" ? "selected" : ""}>Đã Nạp</option>
+                <option ${tran.status === "Hoàn Thành" ? "selected" : ""}>Hoàn Thành</option>
+                <option ${tran.status === "Chưa Xong" ? "selected" : ""}>Chưa Xong</option>
+                <option ${tran.status === "Chờ Rút" ? "selected" : ""}>Chờ Rút</option>
+                <option ${tran.status === "Xong" ? "selected" : ""}>Xong</option>
+                <option ${tran.status === "Xong Tuần" ? "selected" : ""}>Xong Tuần</option>
+                <option ${tran.status === "OFF" ? "selected" : ""}>OFF</option>
+              </select>
+            </td>
+          </tr>
+        `;
+
+        // 📌 GẮN DANH SÁCH DEVICE VÀO SELECT CỦA DÒNG NÀY
+        setTimeout(() => {
+          const sel = document.getElementById(`depositDevice-${tran.username}`);
+          if (sel) {
+            sel.innerHTML = '<option value="">--Device--</option>';
+            allDevices.forEach(d => {
+              const opt = document.createElement('option');
+              opt.value = d.device;
+              opt.textContent = `${d.device} (${d.balance?.toLocaleString('vi-VN')} đ)`;
+              sel.appendChild(opt);
+            });
+          }
+        }, 0);
+      });
+  }
+
+  // ================== CẬP NHẬT TỔNG CƯỢC ==================
+  async function TotalBet(username) {
+    const amount = parseInt(document.getElementById(`TotalBet-${username}`)?.value, 10);
+    if (!amount) return;
+    await fetch("/api/accounts/TotalBet", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ username, amount })
+    });
+    loadTransactions();
+  }
+
+  // ================== NẠP TIỀN ==================
+  async function deposit(username) {
+    const amount = parseInt(document.getElementById(`deposit-${username}`).value, 10);
+    const fromDevice = document.getElementById(`depositDevice-${username}`).value;
+    if (!amount || !fromDevice) {
+      alert("Vui lòng nhập số tiền và chọn Device nạp");
+      return;
+    }
+    await fetch("/api/accounts/deposit", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ username, amount, fromDevice })
+    });
+    await loadDevices();      // 🔁 cập nhật lại số dư device mới nhất
+    loadTransactions();
+    loadHistory();
+  }
+
+  // ================== RÚT TIỀN ==================
+  async function withdraw(username) {
+    const amount = parseInt(document.getElementById(`withdraw-${username}`).value, 10);
+    if (!amount) return;
+    await fetch("/api/accounts/withdraw", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ username, amount })
+    });
+    loadTransactions();
+    loadHistory();
+  }
+
+  // ================== CẬP NHẬT TRẠNG THÁI ==================
+  async function updateStatus(username, status) {
+    await fetch("/api/accounts/status", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ username, status })
+    });
+    loadTransactions();
+  }
+
+// ================== LỊCH SỬ GIAO DỊCH ==================
+async function loadHistory() {
+  // Lấy toàn bộ account để biết game của từng username
+  const accRes = await fetch("/api/accounts/with-stats");
+  const accounts = await accRes.json();
+  const accountMap = {};
+  accounts.forEach(acc => {
+    accountMap[acc.username] = (acc.game || '').toUpperCase();
+  });
+
+  // Lấy lịch sử giao dịch
+  const res = await fetch("/api/transactions/all?limit=40&page=1");
+  const json = await res.json();
+  const data = json.data;
+
+  const tbody = document.querySelector("#historyTable tbody");
+  tbody.innerHTML = "";
+
+  data
+    // chỉ hiển thị các username có game khớp với selectedGame
+    .filter(txn => accountMap[txn.username] === selectedGame)
+    .forEach(txn => {
+      tbody.innerHTML += `
+        <tr>
+          <td>${txn.username}</td>
+          <td>${txn.device || '---'}</td>
+          <td>${txn.amount}</td>
+          <td>${txn.type === 'deposit' ? 'Nạp tiền' : 'Rút tiền'}</td>
+          <td>${txn.time}</td>
+        </tr>
+      `;
+    });
+}
+
+
+  // Cho phép click để chỉnh sửa TotalBet và CurrentBet
+document.addEventListener("click", function(e) {
+  if (e.target.classList.contains("editable-number")) {
+    makeEditable(e.target, "/api/accounts/TotalBet", "totalBet");
+  }
+  if (e.target.classList.contains("editable-currentbet")) {
+    makeEditable(e.target, "/api/accounts/CurrentBet", "currentBet");
+  }
+  // ✅ Thêm dòng này để cho phép sửa cột Thiết bị
+  if (e.target.classList.contains("editable-device")) {
+    makeEditableText(e.target, "/api/accounts/device", "device");
+  }
+});
+
+async function showTotalsMMLIVE() {
+  try {
+    const res = await fetch("/api/accounts/summary/MMLIVE");
+    const data = await res.json();
+
+    // Tạo/ghi đè ô hiển thị
+    let summary = document.getElementById("mmlive-summary");
+    if (!summary) {
+      summary = document.createElement("div");
+      summary.id = "mmlive-summary";
+      document.body.prepend(summary);
+    }
+
+    summary.innerHTML = `
+      <h3>📊 Tổng giao dịch MMLIVE</h3>
+      <p>💰 Tổng nạp: <b>${data.totalDeposit.toLocaleString('vi-VN')} đ</b></p>
+      <p>💸 Tổng rút: <b>${data.totalWithdraw.toLocaleString('vi-VN')} đ</b></p>
+    `;
+  } catch (err) {
+    console.error("Lỗi khi load tổng MMLIVE:", err);
+  }
+}
+
+function makeEditableText(span, apiUrl, field) {
+  const username = span.dataset.username;
+  const oldValue = span.innerText.trim();
+  const input = document.createElement("input");
+  input.type = "text";
+  input.value = oldValue === '---' ? '' : oldValue;
+  input.className = "editable-input";
+
+  span.replaceWith(input);
+  input.focus();
+
+  input.addEventListener("blur", async () => {
+    const value = input.value.trim();
+    if (value) {
+      try {
+        const res = await fetch(apiUrl, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ username, device: value })
+        });
+        if (!res.ok) throw new Error("Cập nhật thất bại");
+      } catch (err) {
+        alert("❌ Lỗi: " + err.message);
+      }
+    }
+    loadTransactions();
+  });
+}
+
+function makeEditable(span, apiUrl, field) {
+  const username = span.dataset.username;
+  const oldValue = span.innerText.trim();
+  const input = document.createElement("input");
+  input.type = "number";
+  input.value = oldValue;
+  input.className = "editable-input";
+
+  // thay span bằng input
+  span.replaceWith(input);
+  input.focus();
+
+  input.addEventListener("blur", async () => {
+    const value = parseInt(input.value, 10);
+    if (!isNaN(value)) {
+      // 🔧 phân nhánh đúng key gửi lên backend
+      const body = (field === "currentBet")
+        ? { username, currentBet: value }
+        : { username, amount: value };
+
+      try {
+        const res = await fetch(apiUrl, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body)
+        });
+        if (!res.ok) throw new Error("Cập nhật thất bại");
+      } catch (err) {
+        alert("❌ Lỗi: " + err.message);
+      }
+    }
+    loadTransactions();
+  });
+}
+
+
+  // ================== FILTER GAME ==================
+  // document.getElementById("gameFilterIcon").addEventListener("click", () => {
+  //   const menu = document.getElementById("gameFilterMenu");
+  //   menu.style.display = (menu.style.display === "block") ? "none" : "block";
+  // });
+
+  // document.querySelectorAll("#gameFilterMenu .game-option").forEach(opt => {
+  //   opt.addEventListener("click", e => {
+  //     selectedGame = e.target.dataset.value;
+  //     document.getElementById("gameFilterMenu").style.display = "none";
+  //     loadTransactions();
+  //   });
+  // });
+
+  // document.addEventListener("click", (e) => {
+  //   if (!document.getElementById("gameFilterWrapper").contains(e.target)) {
+  //     document.getElementById("gameFilterMenu").style.display = "none";
+  //   }
+  // });
+
+  // ================== CHẠY KHI LOAD TRANG ==================
+  (async () => {
+    await loadDevices();
+    await loadTransactions();
+    await showTotalsMMLIVE();
+    loadHistory();
+  })();
+</script>
+
+</body>
+</html>

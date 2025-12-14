@@ -1,0 +1,139 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8">
+  <title>Quản lý Proxy</title>
+  <style>
+    body { font-family: Arial; background: #f9f9f9; }
+    .container { padding: 20px; }
+    .form-row { margin-bottom: 10px; }
+    .form-row input {
+      margin-right: 10px; padding: 6px; width: 200px;
+      border: 1px solid #ccc; border-radius: 4px;
+    }
+    .btn {
+      padding: 6px 12px; background: #3498db; border: none;
+      border-radius: 4px; color: #fff; cursor: pointer;
+    }
+    .btn:hover { background: #2980b9; }
+    table { width: 100%; border-collapse: collapse; margin-top: 20px; }
+    th, td { border: 1px solid #ddd; padding: 6px; text-align: center; }
+    th { background: #2ecc71; color: #fff; }
+  </style>
+</head>
+<body>
+<div class="container">
+
+  <h2>Thêm / Cập nhật Proxy</h2>
+  <form id="proxyForm">
+    <div class="form-row">
+      <input type="text" id="proxy" placeholder="Proxy (IP:Port)" required>
+      <input type="text" id="device" placeholder="Device" required>
+      <button class="btn" type="submit" id="submitBtn">Thêm Proxy</button>
+    </div>
+  </form>
+
+  <h2>Danh sách Proxy</h2>
+  <table id="proxyTable">
+    <thead>
+      <tr>
+        <th>Proxy</th>
+        <th>Device</th>
+        <th>Ngày tạo</th>
+        <th>Sửa</th>
+        <th>Xoá</th>
+      </tr>
+    </thead>
+    <tbody></tbody>
+  </table>
+</div>
+
+<script>
+let editing = false;
+let editingId = "";
+
+async function loadProxies() {
+  const res = await fetch("/api/proxies");
+  const data = await res.json();
+  const tbody = document.querySelector("#proxyTable tbody");
+  tbody.innerHTML = "";
+  data.forEach(p => {
+    tbody.innerHTML += `
+      <tr>
+        <td>${p.proxy}</td>
+        <td>${p.device}</td>
+        <td>${new Date(p.createdAt).toLocaleString('vi-VN')}</td>
+        <td><button class="btn edit-btn" data-id="${p._id}">Sửa</button></td>
+        <td><button class="btn delete-btn" data-id="${p._id}">Xoá</button></td>
+      </tr>
+    `;
+  });
+}
+
+function readForm() {
+  return {
+    proxy: document.getElementById("proxy").value,
+    device: document.getElementById("device").value
+  };
+}
+
+function fillForm(p) {
+  document.getElementById("proxy").value = p.proxy;
+  document.getElementById("device").value = p.device;
+}
+
+function resetForm() {
+  document.getElementById("proxyForm").reset();
+  editing = false;
+  editingId = "";
+  document.getElementById("submitBtn").textContent = "Thêm Proxy";
+}
+
+document.getElementById("proxyForm").addEventListener("submit", async e => {
+  e.preventDefault();
+  const payload = readForm();
+
+  if (!editing) {
+    await fetch("/api/proxies", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload)
+    });
+  } else {
+    await fetch(`/api/proxies/${editingId}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload)
+    });
+  }
+
+  resetForm();
+  loadProxies();
+});
+
+document.addEventListener("click", async e => {
+  if (e.target.classList.contains("delete-btn")) {
+    const id = e.target.dataset.id;
+    if (confirm("Bạn có chắc muốn xoá proxy này?")) {
+      await fetch(`/api/proxies/${id}`, { method: "DELETE" });
+      loadProxies();
+    }
+  }
+
+  if (e.target.classList.contains("edit-btn")) {
+    const id = e.target.dataset.id;
+    const res = await fetch(`/api/proxies`);
+    const proxies = await res.json();
+    const p = proxies.find(x => x._id === id);
+    fillForm(p);
+    editing = true;
+    editingId = id;
+    document.getElementById("submitBtn").textContent = "Cập nhật";
+  }
+});
+
+loadProxies();
+</script>
+
+</body>
+</html>

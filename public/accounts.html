@@ -1,0 +1,221 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8">
+  <title>Quản lý tài khoản</title>
+  <style>
+    .accounts-container { padding: 20px; }
+
+    .section-title {
+      font-size: 20px;
+      font-weight: bold;
+      margin: 20px 0 10px 0;
+      color: #333;
+    }
+
+    .account-form { margin-bottom: 20px; }
+
+    .form-row { margin-bottom: 10px; }
+
+    .form-row input,
+    .form-row select {
+      margin-right: 10px;
+      padding: 6px;
+      height: 34px;
+      width: 200px;
+      box-sizing: border-box;
+      font-size: 14px;
+      border: 1px solid #ccc;
+      border-radius: 4px;
+      text-align: center;
+      appearance: none;
+      -webkit-appearance: none;
+      -moz-appearance: none;
+    }
+
+    .btn {
+      padding: 6px 12px;
+      background-color: #2ecc71;
+      border: none;
+      border-radius: 4px;
+      color: #fff;
+      cursor: pointer;
+    }
+
+    .btn:hover { background-color: #27ae60; }
+
+    #accountTable { width: 100%; border-collapse: collapse; }
+
+    #accountTable th, #accountTable td {
+      padding: 8px;
+      border: 1px solid #ddd;
+      text-align: center;
+    }
+
+    #accountTable th {
+      background-color: #3498db;
+      color: #fff;
+    }
+  </style>
+</head>
+<body>
+  <div class="accounts-container">
+    <!-- Phần thêm tài khoản -->
+    <h2 class="section-title">Thêm tài khoản</h2>
+    <form id="accountForm" class="account-form">
+      <div class="form-row">
+        <select id="game" required>
+          <option value="">-- Chọn game --</option>
+          <option value="MMLIVE">MM live</option>
+          <option value="LC79">LC79</option>
+          <option value="Game C">Game C</option>
+        </select>
+        <input type="text" id="username" placeholder="Tên đăng nhập" required>
+        <input type="text" id="loginPass" placeholder="Mật khẩu đăng nhập" required>
+        <input type="text" id="phone" placeholder="Số điện thoại">
+      </div>
+      <div class="form-row">
+        <input type="text" id="withdrawPass" placeholder="Mật khẩu rút tiền">
+        <input type="text" id="bank" placeholder="Ngân hàng">
+        <input type="text" id="accountNumber" placeholder="STK ngân hàng">
+        <input type="text" id="accountHolder" placeholder="Chủ TK">
+      </div>
+      <button type="submit" class="btn" id="submitBtn">Thêm tài khoản</button>
+    </form>
+
+    <hr>
+
+    <!-- Phần danh sách tài khoản -->
+    <h2 class="section-title">Danh sách tài khoản</h2>
+    <table id="accountTable">
+      <thead>
+        <tr>
+          <th>Game</th>
+          <th>Tên đăng nhập</th>
+          <th>Thiết bị</th>
+          <th>Mật khẩu đăng nhập</th>
+          <th>Số điện thoại</th>
+          <th>Mật khẩu rút tiền</th>
+          <th>Ngân hàng</th>
+          <th>STK ngân hàng</th>
+          <th>Chủ TK</th>
+          <th>Sửa</th>
+          <th>Xóa</th>
+        </tr>
+      </thead>
+      <tbody></tbody>
+    </table>
+  </div>
+
+<script>
+let isEditMode = false;
+let editingUsername = '';
+
+async function loadAccounts() {
+  const res = await fetch("/api/accounts"); // khớp backend
+  const data = await res.json();
+  const tbody = document.querySelector("#accountTable tbody");
+  tbody.innerHTML = "";
+
+  data.forEach(acc => {
+    tbody.innerHTML += `
+      <tr>
+        <td>${acc.game || ""}</td>
+        <td>${acc.username || ""}</td>
+        <td>${acc.device || ""}</td>
+        <td>${acc.loginPass || ""}</td>
+        <td>${acc.phone || ""}</td>
+        <td>${acc.withdrawPass || ""}</td>
+        <td>${acc.bank || ""}</td>
+        <td>${acc.accountNumber || ""}</td>
+        <td>${acc.accountHolder || ""}</td>
+        <td><button class="btn edit-btn" data-username="${acc.username}">Sửa</button></td>
+        <td><button class="btn delete-btn" data-username="${acc.username}">Xóa</button></td>
+      </tr>
+    `;
+  });
+}
+
+function readForm() {
+  return {
+    game: document.getElementById("game").value,
+    username: document.getElementById("username").value,
+    loginPass: document.getElementById("loginPass").value,
+    phone: document.getElementById("phone").value,
+    withdrawPass: document.getElementById("withdrawPass").value,
+    bank: document.getElementById("bank").value,
+    accountNumber: document.getElementById("accountNumber").value,
+    accountHolder: document.getElementById("accountHolder").value,
+  };
+}
+
+function fillForm(acc) {
+  document.getElementById("game").value = acc.game || "";
+  document.getElementById("username").value = acc.username || "";
+  document.getElementById("loginPass").value = acc.loginPass || "";
+  document.getElementById("phone").value = acc.phone || "";
+  document.getElementById("withdrawPass").value = acc.withdrawPass || "";
+  document.getElementById("bank").value = acc.bank || "";
+  document.getElementById("accountNumber").value = acc.accountNumber || "";
+  document.getElementById("accountHolder").value = acc.accountHolder || "";
+}
+
+function resetForm() {
+  document.getElementById("accountForm").reset();
+  isEditMode = false;
+  editingUsername = '';
+  document.getElementById("submitBtn").textContent = "Thêm tài khoản";
+}
+
+document.getElementById("accountForm").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const payload = readForm();
+
+  if (isEditMode) {
+    // Cập nhật
+    await fetch(`/api/accounts/${editingUsername}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+  } else {
+    // Thêm mới
+    await fetch("/api/accounts", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+  }
+
+  resetForm();
+  loadAccounts();
+});
+
+document.addEventListener("click", async (e) => {
+  // XÓA
+  if (e.target.classList.contains("delete-btn")) {
+    const username = e.target.dataset.username;
+    if (confirm("Bạn có chắc muốn xóa tài khoản này?")) {
+      await fetch(`/api/accounts/${username}`, { method: "DELETE" });
+      loadAccounts();
+    }
+  }
+
+  // SỬA
+  if (e.target.classList.contains("edit-btn")) {
+    const username = e.target.dataset.username;
+    const res = await fetch(`/api/accounts/${username}`);
+    const acc = await res.json();
+
+    fillForm(acc);
+    isEditMode = true;
+    editingUsername = username;
+    document.getElementById("submitBtn").textContent = "Cập nhật";
+  }
+});
+
+loadAccounts();
+</script>
+
+</body>
+</html>

@@ -1,0 +1,246 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8">
+  <title>Quản lý User Profiles</title>
+  <style>
+    body { font-family: Arial; background: #f9f9f9; }
+    .container { padding: 20px; }
+    .form-row { margin-bottom: 10px; }
+    .form-row input {
+      margin-right: 10px; padding: 6px; width: 160px;
+      border: 1px solid #ccc; border-radius: 4px;
+    }
+    .btn {
+      padding: 6px 12px; background: #2ecc71; border: none;
+      border-radius: 4px; color: #fff; cursor: pointer;
+    }
+    .btn:hover { background: #27ae60; }
+    table { width: 100%; border-collapse: collapse; margin-top: 20px; }
+    th, td { border: 1px solid #ddd; padding: 6px; text-align: center; }
+    th { background: #3498db; color: #fff; }
+    select.active-select {
+      padding: 4px;
+      border-radius: 4px;
+      border: 1px solid #ccc;
+    }
+    select.active-select.active-true {
+      background: #2ecc71; color: #fff; font-weight: bold;
+    }
+    select.active-select.active-false {
+      background: #e74c3c; color: #fff; font-weight: bold;
+    }
+    .status-select.playing { background:#2ecc71; color:#fff; font-weight:bold; }
+    .status-select.done { background:#e74c3c; color:#fff; font-weight:bold; }
+    .status-select.pause {  
+      background-color: #f1c40f !important;
+      color: #fff !important;
+      border-color: #d4ac0d !important;
+      font-weight: bold !important;
+    }
+
+
+
+  </style>
+</head>
+<body>
+<div class="container">
+
+  <h2>Thêm / Cập nhật User</h2>
+  <form id="userForm">
+    <div class="form-row">
+      <input type="text" id="username" placeholder="UserName" required>
+      <input type="text" id="nickname" placeholder="NickName">
+      <input type="text" id="proxy" placeholder="Proxy">
+      <input type="text" id="uuid" placeholder="UUID">
+      <input type="text" id="device" placeholder="Device">
+      <input type="number" id="balance" placeholder="Balance">
+      <input type="text" id="accessToken" placeholder="Access Token">
+      <label>
+        <input type="checkbox" id="active" checked> Active
+      </label>
+      <button class="btn" type="submit" id="submitBtn">Thêm User</button>
+    </div>
+  </form>
+
+  <h2>Danh sách User</h2>
+  <table id="userTable">
+    <thead>
+      <tr>
+        <th>UserName</th>
+        <th>NickName</th>
+        <th>Proxy</th>
+        <th>UUID</th>
+        <th>Device</th>
+        <th>Balance</th>
+        <th>Access Token</th>
+        <th>Active</th>
+        <th>Ngày tạo</th>
+        <th>Sửa</th>
+        <th>Xoá</th>
+      </tr>
+    </thead>
+    <tbody></tbody>
+  </table>
+</div>
+
+<script>
+let editing = false;
+let editingUser = "";
+
+async function loadUsers() {
+  const res = await fetch("/api/users");
+  const data = await res.json();
+  const tbody = document.querySelector("#userTable tbody");
+  tbody.innerHTML = "";
+  data.forEach(u => {
+    const status = u.status || "Mới Tạo";
+    tbody.innerHTML += `
+      <tr>
+        <td>${u.username}</td>
+        <td>${u.nickname || ""}</td>
+        <td>${u.proxy || ""}</td>
+        <td>${u.uuid || ""}</td>
+        <td>${u.device || ""}</td>
+        <td>${u.balance || 0}</td>
+        <td>${u.accessToken || ""}</td>
+        <td>
+          ${statusSelect(u.username, status)}
+        </td>
+        <td>${new Date(u.createdAt).toLocaleString('vi-VN')}</td>
+        <td><button class="btn edit-btn" data-username="${u.username}">Sửa</button></td>
+        <td><button class="btn delete-btn" data-username="${u.username}">Xoá</button></td>
+      </tr>
+    `;
+  });
+}
+
+async function updateStatus(username, selectEl) {
+  const val = selectEl.value;
+  try {
+    const res = await fetch(`/api/users/${username}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ status: val })
+    });
+    if (!res.ok) throw new Error("Cập nhật trạng thái thất bại");
+
+    // reset class và gán lại đúng màu
+    selectEl.classList.remove("playing","done","pause");
+    if (val === "Đang Chơi") selectEl.classList.add("playing");
+    else if (["Hết Tiền","Proxy Lỗi","Token Lỗi"].includes(val)) {
+      selectEl.classList.add("done");
+    }
+    else if (val === "Tạm Nghỉ") {
+      selectEl.classList.add("pause");
+    }
+    // reload lại danh sách user để đồng bộ
+    await loadUsers();
+  } catch (err) {
+    alert("Lỗi cập nhật status: " + err.message);
+  }
+}
+
+
+function readForm() {
+  return {
+    username: document.getElementById("username").value,
+    nickname: document.getElementById("nickname").value,
+    proxy: document.getElementById("proxy").value,
+    uuid: document.getElementById("uuid").value,
+    device: document.getElementById("device").value,
+    balance: Number(document.getElementById("balance").value),
+    accessToken: document.getElementById("accessToken").value,
+    status: document.getElementById("active").checked ? "Đang Chơi" : "Tạm Nghỉ"
+  };
+}
+
+function fillForm(u) {
+  document.getElementById("username").value = u.username;
+  document.getElementById("nickname").value = u.nickname || "";
+  document.getElementById("proxy").value = u.proxy || "";
+  document.getElementById("uuid").value = u.uuid || "";
+  document.getElementById("device").value = u.device || "";
+  document.getElementById("balance").value = u.balance || 0;
+  document.getElementById("accessToken").value = u.accessToken || "";
+  document.getElementById("active").checked = (u.status === "Đang Chơi");
+}
+
+function statusSelect(username, status) {
+  // Danh sách trạng thái hợp lệ
+  const valid = ['Đang Chơi','Proxy Lỗi','Token Lỗi','Hết Tiền','OFF Ngày','Mới Tạo','Tạm Nghỉ','Đủ Ngày','Đủ Tuần','Đủ Tháng'];
+  // Nếu BE trả status ngoài danh sách thì fallback về "Mới Tạo"
+  const s = valid.includes(status) ? status : 'Mới Tạo';
+
+  // Áp class màu theo trạng thái
+  const cls = [
+    'status-select',
+    (s === 'Đang Chơi' ? 'playing' : ''),
+    (['Hết Tiền', 'Proxy Lỗi', 'Token Lỗi'].includes(s) ? 'done' : ''),
+    (s === 'Tạm Nghỉ' ? 'pause' : '')
+  ].join(' ');
+
+  // Tất cả option cần hiển thị
+  const options = valid;
+
+  return `
+    <select class="${cls}" data-username="${username}" onchange="updateStatus('${username}', this)">
+      ${options.map(o => `<option ${o===s ? 'selected' : ''}>${o}</option>`).join('')}
+    </select>
+  `;
+}
+
+function resetForm() {
+  document.getElementById("userForm").reset();
+  editing = false;
+  editingUser = "";
+  document.getElementById("submitBtn").textContent = "Thêm User";
+}
+
+document.getElementById("userForm").addEventListener("submit", async e => {
+  e.preventDefault();
+  const payload = readForm();
+
+  if (!editing) {
+    await fetch("/api/users", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload)
+    });
+  } else {
+    await fetch(`/api/users/${editingUser}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload)
+    });
+  }
+
+  resetForm();
+  loadUsers();
+});
+
+document.addEventListener("click", async e => {
+  if (e.target.classList.contains("delete-btn")) {
+    const username = e.target.dataset.username;
+    if (confirm("Bạn có chắc muốn xoá user này?")) {
+      await fetch(`/api/users/${username}`, { method: "DELETE" });
+      loadUsers();
+    }
+  }
+
+  if (e.target.classList.contains("edit-btn")) {
+    const username = e.target.dataset.username;
+    const res = await fetch(`/api/users/${username}`);
+    const u = await res.json();
+    fillForm(u);
+    editing = true;
+    editingUser = username;
+    document.getElementById("submitBtn").textContent = "Cập nhật";
+  }
+});
+
+loadUsers();
+</script>
+
+</body>
+</html>

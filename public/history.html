@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8" />
+  <title>Quản Lý Nạp Rút</title>
+  <script src="https://cdn.jsdelivr.net/npm/axios/dist/axios.min.js"></script>
+  <style>
+    body { font-family: sans-serif; padding: 20px; }
+    table { border-collapse: collapse; width: 100%; margin-top: 15px; }
+    th, td { border: 1px solid #ccc; padding: 8px; text-align: center; }
+    th { background: #f2f2f2; }
+    .deposit { color: green; }
+    .withdraw { color: red; }
+    #pagination { margin-top: 15px; text-align: center; }
+    #pagination button {
+      margin: 0 3px;
+      padding: 5px 10px;
+      border: 1px solid #ccc;
+      background: #fff;
+      cursor: pointer;
+    }
+    #pagination button.active {
+      background: #007bff;
+      color: #fff;
+      font-weight: bold;
+    }
+  </style>
+</head>
+<body>
+  <h1>Quản Lý Nạp Rút</h1>
+
+    <div id="stats" style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; margin-top: 15px; margin-bottom: 20px;">
+    <div class="stat-box"><strong>Tổng nạp ngày:</strong> <span id="dayDeposit">0</span></div>
+    <div class="stat-box"><strong>Tổng rút ngày:</strong> <span id="dayWithdraw">0</span></div>
+
+    <div class="stat-box"><strong>Tổng nạp tuần:</strong> <span id="weekDeposit">0</span></div>
+    <div class="stat-box"><strong>Tổng rút tuần:</strong> <span id="weekWithdraw">0</span></div>
+
+    <div class="stat-box"><strong>Tổng nạp (all):</strong> <span id="allDeposit">0</span></div>
+    <div class="stat-box"><strong>Tổng rút (all):</strong> <span id="allWithdraw">0</span></div>
+    </div>
+
+  <table>
+    <thead>
+      <tr>
+        <th>User Name</th>
+        <th>Loại</th>
+        <th>Số tiền</th>
+        <th>Thời gian (+7)</th>
+      </tr>
+    </thead>
+    <tbody id="dataBody"></tbody>
+  </table>
+
+  <div id="pagination"></div>
+
+  <script>
+    const limit = 20;
+
+    function loadPage(page = 1) {
+      axios.get(`/api/transactions/all?page=${page}&limit=${limit}`)
+        .then(res => {
+          const tbody = document.getElementById('dataBody');
+          tbody.innerHTML = '';
+
+          res.data.data.forEach(tx => {
+            const tr = document.createElement('tr');
+            tr.innerHTML = `
+              <td>${tx.username}</td>
+              <td class="${tx.type === 'deposit' ? 'deposit' : 'withdraw'}">${tx.type}</td>
+              <td>${tx.amount.toLocaleString()}</td>
+              <td>${tx.time}</td>
+            `;
+            tbody.appendChild(tr);
+          });
+
+          // render phân trang
+          const pagination = document.getElementById('pagination');
+          pagination.innerHTML = '';
+          for (let i = 1; i <= res.data.totalPages; i++) {
+            const btn = document.createElement('button');
+            btn.textContent = i;
+            if (i === res.data.page) btn.classList.add('active');
+            btn.onclick = () => loadPage(i);
+            pagination.appendChild(btn);
+          }
+        })
+        .catch(err => console.error(err));
+    }
+
+    loadPage();
+            // Gọi API stats
+        axios.get('/api/transactions/stats')
+        .then(res => {
+            document.getElementById('dayDeposit').textContent = res.data.day.deposit.toLocaleString();
+            document.getElementById('dayWithdraw').textContent = res.data.day.withdraw.toLocaleString();
+            document.getElementById('weekDeposit').textContent = res.data.week.deposit.toLocaleString();
+            document.getElementById('weekWithdraw').textContent = res.data.week.withdraw.toLocaleString();
+            document.getElementById('allDeposit').textContent = res.data.all.deposit.toLocaleString();
+            document.getElementById('allWithdraw').textContent = res.data.all.withdraw.toLocaleString();
+        })
+        .catch(err => console.error(err));
+
+  </script>
+</body>
+</html>

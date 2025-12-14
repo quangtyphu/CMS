@@ -1,0 +1,194 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8">
+  <title>Quản lý Device Balance</title>
+  <style>
+    .container { padding: 20px; }
+    .section-title {
+      font-size: 20px;
+      font-weight: bold;
+      margin: 20px 0 10px 0;
+      color: #333;
+    }
+    .form-row { margin-bottom: 10px; }
+    .form-row input {
+      margin-right: 10px;
+      padding: 6px;
+      height: 34px;
+      width: 200px;
+      box-sizing: border-box;
+      font-size: 14px;
+      border: 1px solid #ccc;
+      border-radius: 4px;
+      text-align: center;
+    }
+    .btn {
+      padding: 6px 12px;
+      background-color: #2ecc71;
+      border: none;
+      border-radius: 4px;
+      color: #fff;
+      cursor: pointer;
+    }
+    .btn:hover { background-color: #27ae60; }
+    #deviceTable { width: 100%; border-collapse: collapse; margin-top:20px; }
+    #deviceTable th, #deviceTable td {
+      padding: 8px;
+      border: 1px solid #ddd;
+      text-align: center;
+    }
+    #deviceTable th { background-color: #3498db; color: #fff; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <!-- Form thêm/sửa -->
+    <h2 class="section-title">Thêm / Cập nhật Device</h2>
+    <form id="deviceForm">
+      <div class="form-row">
+        <input type="text" id="device" placeholder="Tên Device" required>
+        <input type="number" id="balance" placeholder="Số dư" required>
+        <input type="text" id="bank" placeholder="Ngân hàng">               <!-- 🆕 -->
+        <input type="text" id="username" placeholder="Tên đăng nhập">       <!-- 🆕 -->
+        <input type="text" id="accountNumber" placeholder="STK ngân hàng">
+        <input type="text" id="accountHolder" placeholder="Chủ tài khoản">
+        <button type="submit" class="btn" id="submitBtn">Thêm Device</button>
+      </div>
+    </form>
+
+
+    <hr>
+
+    <!-- Danh sách device -->
+    <h2 class="section-title">Danh sách Device</h2>
+    <h3 id="totalBalanceDisplay">Tổng số dư: 0 đ</h3>
+    <table id="deviceTable">
+      <thead>
+        <tr>
+          <th>Device</th>
+          <th>Số dư</th>
+          <th>Ngân hàng</th>        <!-- 🆕 -->
+          <th>Tên đăng nhập</th>
+          <th>STK</th>
+          <th>Chủ tài khoản</th>
+          <th>Sửa</th>
+          <th>Xóa</th>
+        </tr>
+      </thead>
+      <tbody></tbody>
+    </table>
+  </div>
+
+<script>
+let isEditMode = false;
+let editingDevice = '';
+
+async function loadDevices() {
+  const res = await fetch("/api/device-balances");
+  const data = await res.json();
+  const tbody = document.querySelector("#deviceTable tbody");
+  tbody.innerHTML = "";
+
+  let totalBalance = 0; // 🆕 tạo biến tổng
+
+  data.forEach(item => {
+    totalBalance += item.balance || 0; // 🆕 cộng dồn
+    tbody.innerHTML += `
+      <tr>
+        <td>${item.device || ""}</td>
+        <td>${(item.balance || 0).toLocaleString('vi-VN')} đ</td>
+        <td>${item.bank || ""}</td>
+        <td>${item.username || ""}</td>
+        <td>${item.accountNumber || ""}</td>
+        <td>${item.accountHolder || ""}</td>
+        <td><button class="btn edit-btn" data-device="${item.device}">Sửa</button></td>
+        <td><button class="btn delete-btn" data-device="${item.device}">Xóa</button></td>
+      </tr>
+    `;
+  });
+
+  // 🆕 hiển thị tổng số dư ra thẻ h3 đã tạo
+  document.getElementById("totalBalanceDisplay").textContent =
+    "Tổng số dư: " + totalBalance.toLocaleString('vi-VN') + " đ";
+}
+
+function readForm() {
+  return {
+    device: document.getElementById("device").value,
+    balance: Number(document.getElementById("balance").value),
+    bank: document.getElementById("bank").value,             // 🆕 thêm
+    username: document.getElementById("username").value,     // 🆕 thêm
+    accountNumber: document.getElementById("accountNumber").value,
+    accountHolder: document.getElementById("accountHolder").value
+  };
+}
+
+function fillForm(item) {
+  document.getElementById("device").value = item.device || "";
+  document.getElementById("balance").value = item.balance || 0;
+  document.getElementById("bank").value = item.bank || "";               // 🆕
+  document.getElementById("username").value = item.username || "";       // 🆕
+  document.getElementById("accountNumber").value = item.accountNumber || "";
+  document.getElementById("accountHolder").value = item.accountHolder || "";
+}
+
+function resetForm() {
+  document.getElementById("deviceForm").reset();
+  isEditMode = false;
+  editingDevice = '';
+  document.getElementById("submitBtn").textContent = "Thêm Device";
+}
+document.getElementById("deviceForm").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const payload = readForm();
+
+  if (isEditMode && editingDevice) {
+    // ✅ Update device
+    await fetch(`/api/device-balances/${editingDevice}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+  } else {
+    // ✅ Thêm mới device
+    await fetch("/api/device-balances", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+  }
+
+  resetForm();
+  loadDevices();
+});
+
+
+document.addEventListener("click", async (e) => {
+  // XÓA
+  if (e.target.classList.contains("delete-btn")) {
+    const device = e.target.dataset.device;
+    if (confirm("Bạn có chắc muốn xóa device này?")) {
+      await fetch(`/api/device-balances/${device}`, { method: "DELETE" });
+      loadDevices();
+    }
+  }
+
+  // SỬA
+  if (e.target.classList.contains("edit-btn")) {
+    const device = e.target.dataset.device;
+    const res = await fetch(`/api/device-balances/${device}`);
+    const item = await res.json();
+
+    fillForm(item);
+    isEditMode = true;
+    editingDevice = device;
+    document.getElementById("submitBtn").textContent = "Cập nhật";
+  }
+});
+
+loadDevices();
+</script>
+
+</body>
+</html>

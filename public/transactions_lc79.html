@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8">
+  <title>Tổng Cược LC79</title>
+  <style>
+    body { font-family: Arial, sans-serif; margin: 20px; }
+    h2 { margin-bottom: 15px; }
+    table { width: 100%; border-collapse: collapse; margin-top: 20px; }
+    th, td { border: 1px solid #ddd; padding: 8px; text-align: center; }
+    th { background: #2c3e50; color: #fff; }
+    #refreshBtn {
+      background-color: #3498db; color: #fff; border: none;
+      padding: 8px 16px; border-radius: 5px; cursor: pointer; font-weight: bold;
+      margin-bottom: 15px;
+    }
+    #refreshBtn:hover { background-color: #2980b9; }
+  </style>
+</head>
+<body>
+  <h2>📊 Bảng Tổng Cược Game LC79</h2>
+  <!-- ✅ gọi đúng tên hàm -->
+  <button id="refreshBtn" onclick="loadStats()">🔄 Refresh</button>
+
+  <!-- Tổng cược ngày toàn bộ users -->
+  <div id="totalDaySummary" style="margin-top:10px; font-weight:bold;">Tổng Cược Ngày: 0</div>
+
+  <table id="lc79Table">
+    <thead>
+      <tr>
+        <th>Username</th>
+        <th>Nick Name</th>
+        <th>Tổng Ngày</th>
+        <th>Tổng Tuần</th>
+        <th>Tổng Tháng</th>
+        <th>Tổng All</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr><td colspan="6">Đang tải dữ liệu...</td></tr>
+    </tbody>
+  </table>
+
+<script>
+async function loadStats() {
+  try {
+    // Lấy tất cả bản ghi từ bet_totals
+    const res = await fetch('/api/bet-totals?page=1&limit=10000');
+    const json = await res.json();
+    const rows = Array.isArray(json.data) ? json.data : (Array.isArray(json) ? json : []);
+
+    // Lấy nickname từ user_profiles (để hiển thị Nick Name)
+    let nickMap = {};
+    try {
+      const ures = await fetch('/api/users');
+      const users = await ures.json();
+      users.forEach(u => { nickMap[u.username] = u.nickname || ''; });
+    } catch (e) {
+      // nếu không lấy được users thì vẫn render thôi
+      console.warn('Không lấy được /api/users:', e);
+    }
+
+    const tbody = document.querySelector('#lc79Table tbody');
+    tbody.innerHTML = "";
+
+    if (!rows || rows.length === 0) {
+      tbody.innerHTML = "<tr><td colspan='6'>Không có dữ liệu LC79</td></tr>";
+      return;
+    }
+
+    // sắp xếp theo tổng all giảm dần
+    rows.sort((a, b) => (b.total_all || 0) - (a.total_all || 0));
+
+    // tính tổng ngày cho tất cả users
+    const totalDayAll = rows.reduce((s, r) => s + Number(r.total_day || 0), 0);
+    const totalDayEl = document.getElementById('totalDaySummary');
+    if (totalDayEl) totalDayEl.textContent = `Tổng Cược Ngày: ${totalDayAll.toLocaleString('vi-VN')}`;
+
+    rows.forEach(it => {
+      const row = document.createElement('tr');
+      row.innerHTML = `
+        <td>${it.username}</td>
+        <td>${nickMap[it.username] || ''}</td>
+        <td>${Number(it.total_day || 0).toLocaleString()}</td>
+        <td>${Number(it.total_week || 0).toLocaleString()}</td>
+        <td>${Number(it.total_month || 0).toLocaleString()}</td>
+        <td><b>${Number(it.total_all || 0).toLocaleString()}</b></td>
+      `;
+      tbody.appendChild(row);
+    });
+
+  } catch (err) {
+    console.error('Lỗi khi tải dữ liệu:', err);
+    document.querySelector('#lc79Table tbody').innerHTML =
+      "<tr><td colspan='6'>Lỗi khi tải dữ liệu</td></tr>";
+  }
+}
+// tải lần đầu và tự refresh mỗi 30s
+loadStats();
+setInterval(loadStats, 30000);
+</script>
+
+</body>
+</html>

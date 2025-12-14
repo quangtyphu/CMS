@@ -1,0 +1,142 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8">
+  <title>Quản lý Thiết Bị</title>
+  <style>
+    body { font-family: Arial, sans-serif; margin: 20px; }
+    table { border-collapse: collapse; width: 100%; }
+    th, td { border: 1px solid #ccc; padding: 8px; text-align: center; }
+    th { background: #eee; }
+    input[type="text"] { width: 90%; padding: 4px; }
+    button { padding: 4px 8px; }
+  </style>
+</head>
+<body>
+  <h2>Menu Quản Lý Thiết Bị</h2>
+  <table>
+    <thead>
+      <tr>
+        <th>Tên đăng nhập</th>
+        <th>Thiết Bị</th>
+        <th>Tổng cược</th>
+        <th>Đã cược</th>
+        <th>Trạng thái</th>
+        <th>Hành động</th>
+      </tr>
+    </thead>
+    <tbody id="deviceTableBody">
+      <!-- Dữ liệu sẽ được load ở đây -->
+    </tbody>
+  </table>
+
+  <script>
+    async function loadData() {
+      try {
+        const res = await fetch("/api/accounts");
+        const data = await res.json();
+
+        const tbody = document.getElementById("deviceTableBody");
+        tbody.innerHTML = "";
+
+        data.forEach(item => {
+          const row = document.createElement("tr");
+
+          // input thiết bị (nếu có device thì show ra, còn không thì rỗng)
+          row.innerHTML = `
+            <td>${item.username}</td>
+            <td><input type="text" id="device-${item.username}" value="${item.device || ''}"></td>
+            <td>
+              <input type="number" id="totalBet-${item.username}" value="${item.totalBet || 0}">
+              <button onclick="updateTotalBet('${item.username}')">Lưu</button>
+            </td>
+            <td>
+              <input type="number" id="currentBet-${item.username}" value="${item.currentBet || 0}">
+              <button onclick="updateCurrentBet('${item.username}')">Lưu</button>
+            </td>
+            <td>
+              <select onchange="updateStatus('${item.username}', this.value)">
+                <option ${item.status === "Đang Chơi" ? "selected" : ""}>Đang Chơi</option>
+                <option ${item.status === "Hoàn Thành" ? "selected" : ""}>Hoàn Thành</option>
+                <option ${item.status === "Chờ Rút" ? "selected" : ""}>Chờ Rút</option>
+                <option ${item.status === "OFF" ? "selected" : ""}>OFF</option>
+              </select>
+            </td>
+            <td><button onclick="updateDevice('${item.username}')">Lưu</button></td>
+          `;
+          tbody.appendChild(row);
+        });
+      } catch (err) {
+        console.error("Lỗi load dữ liệu:", err);
+      }
+    }
+    async function updateStatus(username, status) {
+      try {
+        await fetch("/api/accounts/status", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ username, status })
+        });
+        alert("Đã cập nhật trạng thái cho user: " + username);
+      } catch (err) {
+        alert("Lỗi khi cập nhật trạng thái!");
+        console.error(err);
+      }
+    }
+
+    async function updateTotalBet(username) {
+      const amount = parseInt(document.getElementById(`totalBet-${username}`).value);
+      if (isNaN(amount)) return;
+      try {
+        await fetch("/api/accounts/TotalBet", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ username, amount })
+        });
+        alert("Đã cập nhật tổng cược cho user: " + username);
+      } catch (err) {
+        alert("Lỗi khi cập nhật tổng cược!");
+        console.error(err);
+      }
+    }
+
+    async function updateCurrentBet(username) {
+      const currentBet = parseInt(document.getElementById(`currentBet-${username}`).value);
+      if (isNaN(currentBet)) return;
+      try {
+        await fetch("/api/accounts/currentBet", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ username, currentBet })
+        });
+        alert("Đã cập nhật đã cược cho user: " + username);
+      } catch (err) {
+        alert("Lỗi khi cập nhật đã cược!");
+        console.error(err);
+      }
+    }
+
+
+    async function updateDevice(username) {
+      const deviceInput = document.getElementById(`device-${username}`);
+      const device = deviceInput.value;
+
+      try {
+        const res = await fetch("/api/accounts/device", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ username, device })
+        });
+        const data = await res.json();
+
+        alert("Đã cập nhật thiết bị cho user: " + data.username);
+      } catch (err) {
+        alert("Lỗi khi cập nhật thiết bị!");
+        console.error(err);
+      }
+    }
+
+    loadData();
+  </script>
+</body>
+</html>
