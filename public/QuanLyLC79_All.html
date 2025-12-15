@@ -33,6 +33,52 @@
     #accountsPagination button { margin:0 4px; }
     #accountsPagination button.active { background:var(--green); }
     .small-muted { font-size:12px; color:#666; margin-left:8px; }
+
+    /* Action buttons */
+    button.btn-check {
+      padding: 4px 8px;
+      background: #3498db;
+      color: white;
+      border: none;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 12px;
+      white-space: nowrap;
+    }
+
+    button.btn-check:hover {
+      background: #2980b9;
+    }
+
+    button.btn-deposit {
+      padding: 4px 8px;
+      background: #2ecc71;
+      color: white;
+      border: none;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 12px;
+      white-space: nowrap;
+    }
+
+    button.btn-deposit:hover {
+      background: #27ae60;
+    }
+
+    button.btn-withdraw {
+      padding: 4px 8px;
+      background: #e74c3c;
+      color: white;
+      border: none;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 12px;
+      white-space: nowrap;
+    }
+
+    button.btn-withdraw:hover {
+      background: #c0392b;
+    }
   </style>
 </head>
 <body>
@@ -188,25 +234,29 @@ async function loadAccountsWithStats() {
       };
     });
 
-    // Lấy dữ liệu streaks từ API /streaks/:username cho các account hiện có
+    // Lấy dữ liệu streaks từ API /streaks/batch cho các account hiện có
     try {
       const usernames = Array.from(new Set((accounts || []).map(a => a.username).filter(Boolean)));
-      await Promise.all(usernames.map(async uname => {
-        try {
-          const r = await fetch(`/streaks/${encodeURIComponent(uname)}`);
-          if (!r.ok) return;
-          const s = await r.json();
-          userMap[uname] = userMap[uname] || {};
-          userMap[uname].streak_win_today = Number(s.best_win_today || 0);
-          userMap[uname].streak_lose_today = Number(s.best_lose_today || 0);
-          userMap[uname].streak_current_type = s.current_type || null;
-          userMap[uname].streak_current_len = Number(s.current_len || 0);
-        } catch (e) {
-          // ignore per-user fetch errors
+      if (usernames.length > 0) {
+        const r = await fetch('/streaks/batch', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ usernames })
+        });
+        if (r.ok) {
+          const batch = await r.json(); // { username: {best_win_today,...}, ... }
+          usernames.forEach(uname => {
+            const s = batch[uname] || {};
+            userMap[uname] = userMap[uname] || {};
+            userMap[uname].streak_win_today = Number(s.best_win_today || 0);
+            userMap[uname].streak_lose_today = Number(s.best_lose_today || 0);
+            userMap[uname].streak_current_type = s.current_type || null;
+            userMap[uname].streak_current_len = Number(s.current_len || 0);
+          });
         }
-      }));
+      }
     } catch (e) {
-      console.warn('Không lấy được /streaks/:username:', e);
+      console.warn('Không lấy được streaks batch:', e);
     }
 
     // Nạp ngày vẫn dựa theo historyData (lọc trong ngày)
@@ -236,6 +286,274 @@ async function loadAccountsWithStats() {
   }
 }
 
+
+
+
+// ========== MODAL NẠP TIỀN ==========
+function openDepositModal(username) {
+  console.log('🔍 openDepositModal được gọi cho user:', username);
+  
+  const amount = prompt(`Nhập số tiền nạp cho user ${username}:`, '100000');
+  console.log('💰 Số tiền nhập:', amount);
+  
+  if (!amount || amount <= 0) {
+    console.log('❌ Số tiền không hợp lệ');
+    return;
+  }
+
+  const confirmed = confirm(`Xác nhận nạp ${Number(amount).toLocaleString('vi-VN')} VND cho ${username}?`);
+  console.log('✅ Xác nhận:', confirmed);
+  
+  if (!confirmed) return;
+
+  deposit(username, amount);
+}
+
+async function deposit(username, amount) {
+  console.log('📤 Bắt đầu nạp tiền:', { username, amount });
+  
+  try {
+    const payload = { username, amount: Number(amount) };
+    console.log('📦 Payload gửi đi:', payload);
+    
+    const res = await fetch('http://127.0.0.1:8080/api/deposit', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+
+    console.log('📥 Response status:', res.status);
+    const data = await res.json();
+    console.log('📥 Response data:', data);
+
+    if (!res.ok) {
+      console.error('❌ API trả về lỗi:', data);
+      alert(`❌ Lỗi nạp tiền: ${data.error || 'Unknown error'}`);
+      return;
+    }
+
+    console.log('✅ Nhận dữ liệu nạp tiền thành công!');
+    
+    // Hiển thị QR modal
+    if (data.ok && data.data) {
+      showQRModal(data);
+    } else {
+      alert(`✅ Nạp tiền thành công!\n${data.message || JSON.stringify(data, null, 2)}`);
+    }
+    
+    loadAccountsWithStats(); // Refresh bảng
+  } catch (err) {
+    console.error('❌ Lỗi khi nạp tiền:', err);
+    alert('❌ Lỗi khi nạp tiền: ' + err.message);
+  }
+}
+
+// Hiển thị modal QR code
+function showQRModal(data) {
+  const qrData = data.data;
+  
+  console.log('🖼️ QR Data:', qrData);
+  
+  // Tạo modal
+  const modal = document.createElement('div');
+  modal.style.cssText = `
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: rgba(0,0,0,0.7);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 9999;
+  `;
+  
+  const content = document.createElement('div');
+  content.style.cssText = `
+    background: white;
+    padding: 30px;
+    border-radius: 15px;
+    box-shadow: 0 8px 30px rgba(0,0,0,0.3);
+    max-width: 500px;
+    text-align: center;
+  `;
+  
+  // Ưu tiên: qr_link (URL) > qr_base64 > qr
+  let qrImageSrc = qrData.qrLink || qrData.qr_link || '';
+  
+  // Nếu không có link, dùng base64
+  if (!qrImageSrc) {
+    const base64Data = qrData.qr_base64 || qrData.qrBase64 || qrData.qr;
+    if (base64Data) {
+      qrImageSrc = `data:image/png;base64,${base64Data}`;
+    }
+  }
+  
+  console.log('🖼️ QR Image Source:', qrImageSrc);
+  
+  content.innerHTML = `
+    <h2 style="margin-top:0; color:#2ecc71;">✅ ${data.message || 'Tạo lệnh nạp tiền thành công'}</h2>
+    
+    <div style="background:#f8f9fa; padding:20px; border-radius:10px; margin:20px 0;">
+      <h3 style="margin-top:0;">Thông tin chuyển khoản</h3>
+      <p style="margin:8px 0;"><strong>🎮 User:</strong> ${qrData.username || 'N/A'}</p>
+      <p style="margin:8px 0;"><strong>👤 Tên TK:</strong> ${qrData.name || qrData.accountHolder || 'N/A'}</p>
+      <p style="margin:8px 0;"><strong>🏦 Số TK:</strong> ${qrData.receiver || qrData.accountNumber || 'N/A'}</p>
+      <p style="margin:8px 0;"><strong>💰 Số tiền:</strong> ${Number(qrData.amount || 0).toLocaleString('vi-VN')} đ</p>
+      <p style="margin:8px 0;"><strong>📝 Nội dung:</strong> <span style="color:#e74c3c; font-weight:bold;">${qrData.msg || qrData.transferContent || 'N/A'}</span></p>
+    </div>
+    
+    <div style="margin:20px 0;">
+      ${qrImageSrc ? `
+        <img src="${qrImageSrc}" alt="QR Code" 
+          style="max-width:300px; width:100%; border:2px solid #ddd; border-radius:8px;" 
+          onerror="console.error('Lỗi load QR:', this.src); this.style.display='none'; this.nextElementSibling.style.display='block';">
+      ` : ''}
+      <div style="display:${qrImageSrc ? 'none' : 'block'}; padding:40px; background:#f8d7da; color:#721c24; border-radius:8px;">
+        ❌ Không thể tải mã QR<br>
+        <small>Vui lòng chuyển khoản theo thông tin bên trên</small>
+      </div>
+    </div>
+    
+    <p style="color:#7f8c8d; font-size:13px;">Vui lòng quét mã QR hoặc chuyển khoản theo thông tin trên</p>
+    <p style="color:#e74c3c; font-size:12px;">⏰ Hết hạn sau: <strong>${qrData.expired || 300}</strong> giây</p>
+    
+    <button onclick="this.closest('div').parentElement.remove()" style="
+      width: 100%;
+      padding: 12px;
+      font-size: 16px;
+      background: #3498db;
+      color: white;
+      border: none;
+      border-radius: 8px;
+      cursor: pointer;
+      font-weight: bold;
+      margin-top: 10px;
+    ">Đóng</button>
+  `;
+  
+  modal.appendChild(content);
+  document.body.appendChild(modal);
+  
+  // Click bên ngoài để đóng
+  modal.addEventListener('click', (e) => {
+    if (e.target === modal) {
+      document.body.removeChild(modal);
+    }
+  });
+}
+
+// ========== MODAL RÚT TIỀN ==========
+function openWithdrawModal(username) {
+  console.log('🔍 openWithdrawModal được gọi cho user:', username);
+  
+  // Tạo modal tùy chỉnh với các button số tiền
+  const modal = document.createElement('div');
+  modal.style.cssText = `
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: rgba(0,0,0,0.5);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 9999;
+  `;
+  
+  const content = document.createElement('div');
+  content.style.cssText = `
+    background: white;
+    padding: 30px;
+    border-radius: 10px;
+    box-shadow: 0 4px 20px rgba(0,0,0,0.3);
+    max-width: 500px;
+  `;
+  
+  content.innerHTML = `
+    <h3 style="margin-top:0; margin-bottom:20px; text-align:center;">Chọn số tiền rút cho ${username}</h3>
+    <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-bottom: 20px;">
+      <button class="withdraw-amount-btn" data-amount="100000" style="padding: 15px; font-size: 16px; background: #e74c3c; color: white; border: none; border-radius: 6px; cursor: pointer; font-weight: bold;">100K</button>
+      <button class="withdraw-amount-btn" data-amount="200000" style="padding: 15px; font-size: 16px; background: #e74c3c; color: white; border: none; border-radius: 6px; cursor: pointer; font-weight: bold;">200K</button>
+      <button class="withdraw-amount-btn" data-amount="300000" style="padding: 15px; font-size: 16px; background: #e74c3c; color: white; border: none; border-radius: 6px; cursor: pointer; font-weight: bold;">300K</button>
+      <button class="withdraw-amount-btn" data-amount="500000" style="padding: 15px; font-size: 16px; background: #e74c3c; color: white; border: none; border-radius: 6px; cursor: pointer; font-weight: bold;">500K</button>
+      <button class="withdraw-amount-btn" data-amount="600000" style="padding: 15px; font-size: 16px; background: #e74c3c; color: white; border: none; border-radius: 6px; cursor: pointer; font-weight: bold;">600K</button>
+      <button class="withdraw-amount-btn" data-amount="800000" style="padding: 15px; font-size: 16px; background: #e74c3c; color: white; border: none; border-radius: 6px; cursor: pointer; font-weight: bold;">800K</button>
+      <button class="withdraw-amount-btn" data-amount="1000000" style="padding: 15px; font-size: 16px; background: #e74c3c; color: white; border: none; border-radius: 6px; cursor: pointer; font-weight: bold;">1TR</button>
+      <button class="withdraw-amount-btn" data-amount="2000000" style="padding: 15px; font-size: 16px; background: #e74c3c; color: white; border: none; border-radius: 6px; cursor: pointer; font-weight: bold;">2TR</button>
+    </div>
+    <button id="cancelWithdraw" style="width: 100%; padding: 10px; font-size: 14px; background: #95a5a6; color: white; border: none; border-radius: 6px; cursor: pointer;">Hủy</button>
+  `;
+  
+  modal.appendChild(content);
+  document.body.appendChild(modal);
+  
+  // Xử lý click các button số tiền
+  content.querySelectorAll('.withdraw-amount-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const amount = btn.getAttribute('data-amount');
+      console.log('💰 Button số tiền được click:', amount);
+      document.body.removeChild(modal);
+      withdraw(username, amount);
+    });
+    
+    btn.addEventListener('mouseenter', (e) => {
+      e.target.style.background = '#c0392b';
+    });
+    
+    btn.addEventListener('mouseleave', (e) => {
+      e.target.style.background = '#e74c3c';
+    });
+  });
+  
+  // Xử lý nút hủy
+  content.querySelector('#cancelWithdraw').addEventListener('click', () => {
+    document.body.removeChild(modal);
+  });
+  
+  // Click ra ngoài để đóng
+  modal.addEventListener('click', (e) => {
+    if (e.target === modal) {
+      document.body.removeChild(modal);
+    }
+  });
+}
+
+async function withdraw(username, amount) {
+  console.log('📤 Bắt đầu rút tiền:', { username, amount });
+  try {
+    const payload = { username, amount: Number(amount) };
+    console.log('📦 Payload gửi đi:', payload);
+
+    // Gọi API Flask mới (port 8080)
+    const res = await fetch('http://127.0.0.1:8080/api/withdraw', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+
+    console.log('📥 Response status:', res.status);
+    const data = await res.json();
+    console.log('📥 Response data:', data);
+
+    if (!res.ok || !data.ok) {
+      console.error('❌ API trả về lỗi:', data);
+      alert(`❌ Lỗi rút tiền: ${data.error || data.message || 'Unknown error'}`);
+      return;
+    }
+
+    console.log('✅ Đã gửi yêu cầu rút tiền!');
+    alert(`✅ Đã gửi yêu cầu rút tiền cho ${username}!\n${data.message || ''}`);
+    loadAccountsWithStats(); // Refresh bảng
+  } catch (err) {
+    console.error('❌ Lỗi khi rút tiền:', err);
+    alert('❌ Lỗi khi rút tiền: ' + err.message);
+  }
+}
+
+// ...existing code...
 // ================= HELPERS =================
 function bankCell(bank, accountNumber) {
   if (!bank && !accountNumber) return '<span class="muted">---</span>';
@@ -306,7 +624,13 @@ function renderTable(rows) {
           ${fmt(userMap[uname]?.streak_lose_today || 0)}/
           ${fmt(userMap[uname]?.streak_current_len || 0)}
         </td>
-        <td><button onclick="forceCheck('${uname}')">Check</button></td>
+        <td>
+          <div style="display:flex; gap:4px; flex-wrap:wrap; justify-content:center;">
+            <button class="btn-check" onclick="forceCheck('${uname}')">🔄 Check</button>
+            <button class="btn-deposit" onclick="openDepositModal('${uname}')">💰 Nạp</button>
+            <button class="btn-withdraw" onclick="openWithdrawModal('${uname}')">💸 Rút</button>
+          </div>
+        </td>
         <td>${statusSelect(uname, r.status)}</td>
       </tr>
     `);
@@ -448,21 +772,6 @@ function tokenEditable(username, value) {
 }
 
 // ================= ACTIONS =================
-async function deposit(username) {
-  const val = parseInt(document.getElementById(`deposit-${username}`).value, 10);
-  const fromDevice = document.getElementById(`depositDevice-${username}`).value;
-  if (!val || val <= 0 || !fromDevice) {
-    return alert('Nhập số tiền hợp lệ và chọn Device nạp');
-  }
-  await fetch('/api/accounts/deposit', {
-    method:'POST', headers:{'Content-Type':'application/json'},
-    body: JSON.stringify({ username, amount: val, fromDevice })
-  });
-  await loadDevices();
-  await init();
-}
-
-// Xác nhận cập nhật device cho giao dịch
 async function confirmTxnDevice(transactionId) {
   const selectEl = document.getElementById(`txnDevice-${transactionId}`);
   const device = selectEl.value;
@@ -501,16 +810,6 @@ function getTxnAmount(transactionId) {
   return txn ? Number(txn.amount || 0) : 0;
 }
 
-async function withdraw(username) {
-  const val = parseInt(document.getElementById(`withdraw-${username}`).value, 10);
-  if (!val || val <= 0) return alert('Nhập số tiền hợp lệ');
-  await fetch('/api/accounts/withdraw', {
-    method:'POST', headers:{'Content-Type':'application/json'},
-    body: JSON.stringify({ username, amount: val })
-  });
-  await init();
-}
-
 async function updateStatus(username, status) {
   try {
     const res = await fetch(`/api/users/${username}`, {
@@ -532,15 +831,56 @@ async function updateStatus(username, status) {
 // ================= FORCE CHECK =================
 async function forceCheck(username) {
   try {
-    await fetch('/api/force-check', {
+    // Gọi API Flask mới
+    const res = await fetch('http://127.0.0.1:8080/api/user-full-check', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ username })
     });
+    const data = await res.json();
+    if (!res.ok || !data.ok) {
+      showCheckUserModal('❌ Lỗi khi kiểm tra user: ' + (data.error || data.message || 'Unknown error'));
+      return;
+    }
+    // Hiển thị kết quả trong modal đẹp
+    showCheckUserModal('✅ Đã kiểm tra user!', data.results);
     await init();
   } catch (err) {
-    console.error('Lỗi khi force-check', err);
+    console.error('Lỗi khi user-full-check', err);
+    showCheckUserModal('❌ Lỗi khi kiểm tra user: ' + err.message);
   }
+
+// Modal hiển thị kết quả check user
+function showCheckUserModal(title, resultsObj) {
+  // Xóa modal cũ nếu có
+  const old = document.getElementById('checkUserModal');
+  if (old) old.remove();
+
+  const modal = document.createElement('div');
+  modal.id = 'checkUserModal';
+  modal.style.cssText = `
+    position: fixed; top: 0; left: 0; width: 100vw; height: 100vh;
+    background: rgba(0,0,0,0.35); z-index: 99999; display: flex; align-items: center; justify-content: center;`
+  ;
+  const content = document.createElement('div');
+  content.style.cssText = `
+    background: #fff; border-radius: 12px; padding: 28px 24px 18px 24px; max-width: 520px; min-width: 320px;
+    box-shadow: 0 8px 32px rgba(0,0,0,0.18); max-height: 80vh; overflow: auto; position: relative;`
+  ;
+  content.innerHTML = `
+    <div style="font-size:18px; font-weight:bold; margin-bottom:10px; color:#27ae60; display:flex; align-items:center; gap:8px;">
+      <span>${title.startsWith('✅') ? '✅' : '❌'}</span> <span>${title.replace(/^✅|^❌/, '').trim()}</span>
+    </div>
+    <pre style="background:#f7f8fa; color:#222; font-size:14px; padding:14px 10px; border-radius:8px; max-height:55vh; overflow:auto; margin:0 0 12px 0;">${typeof resultsObj === 'object' ? JSON.stringify(resultsObj, null, 2) : resultsObj}</pre>
+    <button id="closeCheckUserModalBtn" style="width:100%;padding:10px;font-size:16px;background:#3498db;color:#fff;border:none;border-radius:8px;cursor:pointer;font-weight:bold;">Đóng</button>
+  `;
+  modal.appendChild(content);
+  document.body.appendChild(modal);
+  // Đóng khi bấm nút
+  document.getElementById('closeCheckUserModalBtn').onclick = () => modal.remove();
+  // Đóng khi click ra ngoài
+  modal.addEventListener('click', e => { if (e.target === modal) modal.remove(); });
+}
 }
 
 // ================= LỊCH SỬ GIAO DỊCH (chỉ hiển thị) =================

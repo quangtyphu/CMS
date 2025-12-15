@@ -1,0 +1,378 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8" />
+  <title>Quản Lý Lệnh Nạp Tiền</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <style>
+    :root { --blue:#3498db; --green:#2ecc71; --red:#e74c3c; --orange:#f39c12; --gray:#f7f8fa; }
+    body{font-family:Arial, sans-serif; background:var(--gray); margin:0; padding:20px;}
+    h2{margin:0 0 12px;}
+    button{padding:6px 12px; border:none; border-radius:4px; background:var(--blue); color:#fff; cursor:pointer; font-size:13px;}
+    button:hover{background:#2980b9;}
+    .btn-create{background:var(--green);} .btn-create:hover{background:#27ae60;}
+    .btn-delete{background:var(--red);} .btn-delete:hover{background:#c0392b;}
+    .btn-edit{background:var(--orange);} .btn-edit:hover{background:#e67e22;}
+    table{width:100%; border-collapse:collapse; background:#fff; border-radius:10px; overflow:hidden; margin-top:12px;}
+    th, td{border:1px solid #eee; padding:10px; text-align:center; font-size:14px;}
+    th{background:var(--blue); color:#fff; position:sticky; top:0; z-index:1;}
+    .status-pending{color:var(--orange); font-weight:bold;}
+    .status-processing{color:var(--blue); font-weight:bold;}
+    .status-completed{color:var(--green); font-weight:bold;}
+    .status-failed, .status-cancelled{color:var(--red); font-weight:bold;}
+    .actions{display:flex; gap:4px; justify-content:center;}
+    #pagination { margin-top:10px; text-align:center; }
+    #pagination button { margin:0 4px; }
+    #pagination button.active { background:var(--green); }
+    .filter-bar{display:flex; gap:10px; align-items:center; margin:12px 0; flex-wrap:wrap;}
+    .filter-bar label{font-weight:bold;}
+    .filter-bar select, .filter-bar input{padding:6px; border-radius:4px; border:1px solid #ccc;}
+    .modal{display:none; position:fixed; z-index:999; left:0; top:0; width:100%; height:100%; background:rgba(0,0,0,0.5); overflow:auto;}
+    .modal-content{background:#fff; margin:5% auto; padding:20px; border-radius:8px; width:90%; max-width:500px;}
+    .modal-header{display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;}
+    .modal-header h3{margin:0;}
+    .close-btn{font-size:24px; cursor:pointer; color:var(--red);}
+    .form-group{margin-bottom:12px;}
+    .form-group label{display:block; font-weight:bold; margin-bottom:4px;}
+    .form-group input, .form-group select{width:100%; padding:8px; border-radius:4px; border:1px solid #ccc;}
+  </style>
+</head>
+<body>
+
+<h2>📋 Quản Lý Lệnh Nạp Tiền</h2>
+
+<!-- Filter & Create -->
+<div class="filter-bar">
+  <button class="btn-create" onclick="openCreateModal()">➕ Tạo Lệnh Mới</button>
+  <label>Trạng Thái:</label>
+  <select id="filterStatus" onchange="loadOrders()">
+    <option value="">Tất cả</option>
+    <option value="pending">Pending</option>
+    <option value="processing">Processing</option>
+    <option value="completed">Completed</option>
+    <option value="failed">Failed</option>
+    <option value="cancelled">Cancelled</option>
+  </select>
+  <button onclick="loadOrders()">🔄 Refresh</button>
+</div>
+
+<!-- Main Table -->
+<table>
+  <thead>
+    <tr>
+      <th>ID</th>
+      <th>Username</th>
+      <th>STK Nhận</th>
+      <th>Tên Người Nhận</th>
+      <th>Nội Dung CK</th>
+      <th>Trạng Thái</th>
+      <th>Thời Gian Tạo</th>
+      <th>Cập Nhật</th>
+      <th>Thao Tác</th>
+    </tr>
+  </thead>
+  <tbody id="ordersBody"></tbody>
+</table>
+
+<div id="pagination"></div>
+
+<!-- Modal Create/Edit -->
+<div id="orderModal" class="modal">
+  <div class="modal-content">
+    <div class="modal-header">
+      <h3 id="modalTitle">Tạo Lệnh Mới</h3>
+      <span class="close-btn" onclick="closeModal()">&times;</span>
+    </div>
+    <form id="orderForm" onsubmit="submitOrder(event)">
+      <input type="hidden" id="orderId" />
+      
+      <div class="form-group">
+        <label>Username *</label>
+        <input type="text" id="username" required />
+      </div>
+
+      <div class="form-group">
+        <label>STK Người Nhận</label>
+        <input type="text" id="accountNumber" />
+      </div>
+
+      <div class="form-group">
+        <label>Tên Người Nhận</label>
+        <input type="text" id="accountHolder" />
+      </div>
+
+      <div class="form-group">
+        <label>Nội Dung Chuyển Khoản</label>
+        <input type="text" id="transferContent" />
+      </div>
+
+      <div class="form-group" id="statusGroup" style="display:none;">
+        <label>Trạng Thái</label>
+        <select id="status">
+          <option value="pending">Pending</option>
+          <option value="processing">Processing</option>
+          <option value="completed">Completed</option>
+          <option value="failed">Failed</option>
+          <option value="cancelled">Cancelled</option>
+        </select>
+      </div>
+
+      <div style="display:flex; gap:8px; justify-content:flex-end;">
+        <button type="button" onclick="closeModal()">Hủy</button>
+        <button type="submit" class="btn-create">💾 Lưu</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<script>
+let currentPage = 1;
+const pageSize = 20;
+let totalItems = 0;
+let totalPages = 0;
+let currentStatus = '';
+
+// ========== LOAD ORDERS ==========
+async function loadOrders() {
+  try {
+    currentStatus = document.getElementById('filterStatus').value;
+    const params = new URLSearchParams({ page: currentPage, limit: pageSize });
+    if (currentStatus) params.append('status', currentStatus);
+
+    const res = await fetch(`/api/deposit-orders?${params}`);
+    const data = await res.json();
+    
+    totalItems = data.totalItems || 0;
+    totalPages = data.totalPages || 1;
+    
+    renderOrders(data.data || []);
+    renderPagination();
+  } catch (err) {
+    console.error('❌ Lỗi khi load orders:', err);
+    alert('Không thể tải danh sách lệnh nạp');
+  }
+}
+
+// ========== RENDER TABLE ==========
+function renderOrders(orders) {
+  const tbody = document.getElementById('ordersBody');
+  tbody.innerHTML = '';
+
+  if (orders.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="9" style="text-align:center; color:#999;">Không có dữ liệu</td></tr>';
+    return;
+  }
+
+  orders.forEach(order => {
+    const statusClass = `status-${order.status}`;
+    tbody.innerHTML += `
+      <tr>
+        <td>${order.id}</td>
+        <td><strong>${order.username}</strong></td>
+        <td>${order.accountNumber || '<span style="color:#999;">---</span>'}</td>
+        <td>${order.accountHolder || '<span style="color:#999;">---</span>'}</td>
+        <td>${order.transferContent || '<span style="color:#999;">---</span>'}</td>
+        <td><span class="${statusClass}">${order.status.toUpperCase()}</span></td>
+        <td>${formatDateTime(order.createdAt)}</td>
+        <td>${formatDateTime(order.updatedAt)}</td>
+        <td>
+          <div class="actions">
+            <button class="btn-edit" onclick="openEditModal(${order.id})">✏️</button>
+            <button class="btn-delete" onclick="deleteOrder(${order.id})">🗑️</button>
+          </div>
+        </td>
+      </tr>
+    `;
+  });
+}
+
+// ========== PAGINATION ==========
+function renderPagination() {
+  const container = document.getElementById('pagination');
+  container.innerHTML = '';
+
+  if (totalPages <= 1) {
+    container.innerHTML = `<span style="color:#999;">Tổng ${totalItems} lệnh</span>`;
+    return;
+  }
+
+  // First
+  const firstBtn = document.createElement('button');
+  firstBtn.innerText = '<<';
+  firstBtn.disabled = currentPage === 1;
+  firstBtn.onclick = () => { currentPage = 1; loadOrders(); };
+  container.appendChild(firstBtn);
+
+  // Prev
+  const prevBtn = document.createElement('button');
+  prevBtn.innerText = '<';
+  prevBtn.disabled = currentPage === 1;
+  prevBtn.onclick = () => { currentPage = Math.max(1, currentPage - 1); loadOrders(); };
+  container.appendChild(prevBtn);
+
+  // Pages
+  const maxButtons = 7;
+  let start = Math.max(1, currentPage - Math.floor(maxButtons/2));
+  let end = Math.min(totalPages, start + maxButtons - 1);
+  if (end - start < maxButtons - 1) start = Math.max(1, end - maxButtons + 1);
+
+  for (let i = start; i <= end; i++) {
+    const btn = document.createElement('button');
+    btn.innerText = i;
+    if (i === currentPage) btn.classList.add('active');
+    btn.onclick = () => { currentPage = i; loadOrders(); };
+    container.appendChild(btn);
+  }
+
+  // Next
+  const nextBtn = document.createElement('button');
+  nextBtn.innerText = '>';
+  nextBtn.disabled = currentPage === totalPages;
+  nextBtn.onclick = () => { currentPage = Math.min(totalPages, currentPage + 1); loadOrders(); };
+  container.appendChild(nextBtn);
+
+  // Last
+  const lastBtn = document.createElement('button');
+  lastBtn.innerText = '>>';
+  lastBtn.disabled = currentPage === totalPages;
+  lastBtn.onclick = () => { currentPage = totalPages; loadOrders(); };
+  container.appendChild(lastBtn);
+
+  const info = document.createElement('span');
+  info.style.marginLeft = '10px';
+  info.style.color = '#666';
+  info.innerText = `Trang ${currentPage}/${totalPages} - Tổng ${totalItems} lệnh`;
+  container.appendChild(info);
+}
+
+// ========== MODAL ==========
+function openCreateModal() {
+  document.getElementById('modalTitle').innerText = 'Tạo Lệnh Mới';
+  document.getElementById('orderForm').reset();
+  document.getElementById('orderId').value = '';
+  document.getElementById('statusGroup').style.display = 'none';
+  document.getElementById('orderModal').style.display = 'block';
+}
+
+async function openEditModal(id) {
+  try {
+    const res = await fetch(`/api/deposit-orders?page=1&limit=9999`);
+    const data = await res.json();
+    const order = (data.data || []).find(o => o.id === id);
+    
+    if (!order) {
+      alert('Không tìm thấy lệnh nạp');
+      return;
+    }
+
+    document.getElementById('modalTitle').innerText = `Chỉnh Sửa Lệnh #${id}`;
+    document.getElementById('orderId').value = order.id;
+    document.getElementById('username').value = order.username;
+    document.getElementById('accountNumber').value = order.accountNumber || '';
+    document.getElementById('accountHolder').value = order.accountHolder || '';
+    document.getElementById('transferContent').value = order.transferContent || '';
+    document.getElementById('status').value = order.status;
+    document.getElementById('statusGroup').style.display = 'block';
+    document.getElementById('orderModal').style.display = 'block';
+  } catch (err) {
+    console.error('❌ Lỗi khi load order:', err);
+    alert('Không thể tải thông tin lệnh nạp');
+  }
+}
+
+function closeModal() {
+  document.getElementById('orderModal').style.display = 'none';
+}
+
+// ========== SUBMIT FORM ==========
+async function submitOrder(event) {
+  event.preventDefault();
+  
+  const id = document.getElementById('orderId').value;
+  const username = document.getElementById('username').value.trim();
+  const accountNumber = document.getElementById('accountNumber').value.trim();
+  const accountHolder = document.getElementById('accountHolder').value.trim();
+  const transferContent = document.getElementById('transferContent').value.trim();
+  const status = document.getElementById('status').value;
+
+  const payload = { username, accountNumber, accountHolder, transferContent };
+  if (id) payload.status = status;
+
+  try {
+    let res;
+    if (id) {
+      // Update
+      res = await fetch(`/api/deposit-orders/${id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+    } else {
+      // Create
+      res = await fetch('/api/deposit-orders', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+    }
+
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.error || 'Lỗi khi lưu lệnh nạp');
+    }
+
+    alert(id ? 'Cập nhật thành công!' : 'Tạo lệnh thành công!');
+    closeModal();
+    loadOrders();
+  } catch (err) {
+    console.error('❌ Lỗi submit:', err);
+    alert(err.message || 'Không thể lưu lệnh nạp');
+  }
+}
+
+// ========== DELETE ==========
+async function deleteOrder(id) {
+  if (!confirm(`Bạn có chắc muốn xóa lệnh #${id}?`)) return;
+
+  try {
+    const res = await fetch(`/api/deposit-orders/${id}`, { method: 'DELETE' });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.error || 'Lỗi khi xóa lệnh nạp');
+    }
+    alert('Xóa thành công!');
+    loadOrders();
+  } catch (err) {
+    console.error('❌ Lỗi xóa:', err);
+    alert(err.message || 'Không thể xóa lệnh nạp');
+  }
+}
+
+// ========== HELPERS ==========
+function formatDateTime(dateStr) {
+  if (!dateStr) return '<span style="color:#999;">---</span>';
+  try {
+    const d = new Date(dateStr);
+    const year = d.getFullYear();
+    const month = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
+    const hours = String(d.getHours()).padStart(2, '0');
+    const minutes = String(d.getMinutes()).padStart(2, '0');
+    return `${year}-${month}-${day} ${hours}:${minutes}`;
+  } catch (e) {
+    return dateStr;
+  }
+}
+
+// ========== INIT ==========
+loadOrders();
+
+// Close modal khi click bên ngoài
+window.onclick = function(event) {
+  const modal = document.getElementById('orderModal');
+  if (event.target === modal) closeModal();
+}
+</script>
+
+</body>
+</html>
