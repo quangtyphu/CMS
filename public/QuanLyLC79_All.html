@@ -27,7 +27,20 @@
     #pagination { margin-top:10px; text-align:center; }
     #pagination button { margin:0 4px; }
     #pagination button.active { background:var(--green); }
-    #refreshBtn {display: block;width: 100%;margin: 10px 0;padding: 10px;font-size: 16px;border-radius: 6px;}
+    #refreshBtn {
+      display: block;
+      width: 160px;
+      margin: 10px 0;
+      padding: 10px;
+      font-size: 16px;
+      border-radius: 6px;
+      position: fixed;
+      top: 20px;
+      right: 30px;
+      z-index: 9999;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+      opacity: 0.95;
+    }
     /* accounts pagination */
     #accountsPagination { margin-top:10px; text-align:center; }
     #accountsPagination button { margin:0 4px; }
@@ -94,7 +107,7 @@
     <p>Tổng Cược Ngày: <span id="sumTotalDay">0</span></p>
   </div>
 
-  <button id="refreshBtn" onclick="location.reload()">🔄 Refresh</button>
+  <button id="refreshBtn" onclick="refreshData()">🔄 Refresh</button>
 
   <!-- thêm controls phân trang cho bảng chính -->
   <div style="display:flex; justify-content:space-between; align-items:center; margin:8px 0;">
@@ -133,6 +146,13 @@
 
 
 <script>
+// Hàm refresh giữ nguyên vị trí cuộn
+function refreshData() {
+  const scrollY = window.scrollY;
+  init().then(() => {
+    window.scrollTo({ top: scrollY });
+  });
+}
 const fmt = n => (Number(n||0)).toLocaleString('vi-VN');
 
 let profileMap = {};
@@ -293,19 +313,12 @@ async function loadAccountsWithStats() {
 function openDepositModal(username) {
   console.log('🔍 openDepositModal được gọi cho user:', username);
   
-  const amount = prompt(`Nhập số tiền nạp cho user ${username}:`, '100000');
+  const amount = prompt(`Nhập số tiền nạp cho user ${username}:`, '200000');
   console.log('💰 Số tiền nhập:', amount);
-  
   if (!amount || amount <= 0) {
     console.log('❌ Số tiền không hợp lệ');
     return;
   }
-
-  const confirmed = confirm(`Xác nhận nạp ${Number(amount).toLocaleString('vi-VN')} VND cho ${username}?`);
-  console.log('✅ Xác nhận:', confirmed);
-  
-  if (!confirmed) return;
-
   deposit(username, amount);
 }
 

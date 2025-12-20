@@ -1,5 +1,7 @@
 
 const express = require('express');
+const { v4: uuidv4 } = require('uuid');
+// ...existing code...
 const bodyParser = require('body-parser');
 const cors = require('cors');
 const sqlite3 = require('sqlite3').verbose();
@@ -27,12 +29,30 @@ const db = new sqlite3.Database('./game_data.db', (err) => {
 });
 db.serialize();
 // ------------------- Tạo bảng -------------------
+// Log cấu trúc bảng accounts để kiểm tra trường uuid
+db.all("PRAGMA table_info(accounts)", (err, rows) => {
+  if (!err) {
+    console.log("Cấu trúc bảng accounts:");
+    console.table(rows);
+  }
+});
+
 process.on('SIGINT', () => {
   console.log("🛑 Server dừng, đóng kết nối DB/WS...");
   db.close();
   process.exit();
 });
 // Account
+// Đảm bảo bảng accounts có trường uuid
+db.get("PRAGMA table_info(accounts)", (err, columns) => {
+  if (err) return;
+  const hasUuid = Array.isArray(columns) && columns.some(col => col.name === 'uuid');
+  if (!hasUuid) {
+    db.run("ALTER TABLE accounts ADD COLUMN uuid TEXT", (err2) => {
+      if (!err2) console.log("✅ Đã thêm trường uuid vào bảng accounts");
+    });
+  }
+});
 db.run(`CREATE TABLE IF NOT EXISTS accounts (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   game TEXT,
@@ -757,15 +777,18 @@ app.post('/api/withdraw', async (req, res) => {
   });
 });// ...existing code...
 // ------------------- Thêm tài khoản mới + UserProfile -------------------
+// ...existing code...
+
 app.post('/api/accounts', (req, res) => {
   const { game, username, loginPass, phone, withdrawPass, bank, accountNumber, accountHolder, device } = req.body;
+  const uuid = uuidv4();
 
   // 1. Thêm Account
   const sqlAcc = `INSERT INTO accounts 
-    (game, username, loginPass, phone, withdrawPass, bank, accountNumber, accountHolder, device) 
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`;
+    (game, username, loginPass, phone, withdrawPass, bank, accountNumber, accountHolder, device, uuid) 
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`;
 
-  db.run(sqlAcc, [game, username, loginPass, phone, withdrawPass, bank, accountNumber, accountHolder, device], function (err) {
+  db.run(sqlAcc, [game, username, loginPass, phone, withdrawPass, bank, accountNumber, accountHolder, device, uuid], function (err) {
     if (err) {
       console.error("❌ Lỗi khi thêm Account:", err.message);
       return res.status(500).json({ error: "Không thể thêm tài khoản" });
@@ -1104,10 +1127,16 @@ app.put('/api/accounts/:username', (req, res) => {
   const updates = [];
   const values = [];
   for (const key in fields) {
-    updates.push(`${key} = ?`);
-    values.push(fields[key]);
+    if (["game","loginPass","phone","withdrawPass","bank","accountNumber","accountHolder","device","totalDeposit","totalWithdraw","totalBet","currentBet","status","uuid"].includes(key)) {
+      updates.push(`${key} = ?`);
+      values.push(fields[key]);
+    }
   }
   values.push(username);
+
+  if (updates.length === 0) {
+    return res.status(400).json({ error: "Không có trường hợp lệ để cập nhật" });
+  }
 
   const sql = `UPDATE accounts SET ${updates.join(", ")} WHERE username = ?`;
 
