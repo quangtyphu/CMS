@@ -1672,7 +1672,7 @@ app.post("/api/bet-history", (req, res) => {
 
 app.post('/api/force-check', async (req, res) => {
   try {
-    const r = await fetch('/api/force-check', {
+    const r = await fetch('http://127.0.0.1:5006/api/force-check', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(req.body)
