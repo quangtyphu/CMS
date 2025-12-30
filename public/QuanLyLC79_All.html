@@ -329,7 +329,7 @@ async function deposit(username, amount) {
     const payload = { username, amount: Number(amount) };
     console.log('📦 Payload gửi đi:', payload);
     
-    const res = await fetch('http://127.0.0.1:8080/api/deposit', {
+    const res = await fetch('/api/deposit', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload)
@@ -541,7 +541,7 @@ async function withdraw(username, amount) {
     console.log('📦 Payload gửi đi:', payload);
 
     // Gọi API Flask mới (port 8080)
-    const res = await fetch('http://127.0.0.1:8080/api/withdraw', {
+    const res = await fetch('/api/withdraw', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload)
@@ -845,7 +845,7 @@ async function updateStatus(username, status) {
 async function forceCheck(username) {
   try {
     // Gọi API Flask mới
-    const res = await fetch('http://127.0.0.1:8080/api/user-full-check', {
+    const res = await fetch('/api/user-full-check', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ username })
