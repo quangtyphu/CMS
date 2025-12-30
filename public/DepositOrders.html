@@ -353,6 +353,8 @@ function formatDateTime(dateStr) {
   if (!dateStr) return '<span style="color:#999;">---</span>';
   try {
     const d = new Date(dateStr);
+    // Cộng thêm 7 tiếng (UTC+7)
+    d.setHours(d.getHours() + 7);
     const year = d.getFullYear();
     const month = String(d.getMonth() + 1).padStart(2, '0');
     const day = String(d.getDate()).padStart(2, '0');

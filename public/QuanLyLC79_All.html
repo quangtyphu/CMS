@@ -862,7 +862,7 @@ async function forceCheck(username) {
     console.error('Lỗi khi user-full-check', err);
     showCheckUserModal('❌ Lỗi khi kiểm tra user: ' + err.message);
   }
-
+}
 // Modal hiển thị kết quả check user
 function showCheckUserModal(title, resultsObj) {
   // Xóa modal cũ nếu có
@@ -894,7 +894,7 @@ function showCheckUserModal(title, resultsObj) {
   // Đóng khi click ra ngoài
   modal.addEventListener('click', e => { if (e.target === modal) modal.remove(); });
 }
-}
+
 
 // ================= LỊCH SỬ GIAO DỊCH (chỉ hiển thị) =================
 async function loadHistory() {
@@ -946,7 +946,7 @@ function buildTodayWithdrawMap() {
 
 async function updateTxnDevice(transactionId, device) {
   try {
-    const res = await fetch(`/api/transactions/${transactionId}/device`, {
+    const res = await fetch(`http://127.0.0.1:8080/api/transactions/${transactionId}/device`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ device })
