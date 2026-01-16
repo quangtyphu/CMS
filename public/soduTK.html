@@ -39,6 +39,25 @@
       text-align: center;
     }
     #deviceTable th { background-color: #3498db; color: #fff; }
+    .editable-balance {
+      border-bottom: 1px dashed #3498db;
+      color: #3498db;
+      cursor: pointer;
+      display: inline-block;
+      min-width: 60px;
+      padding: 2px 4px;
+    }
+    .editable-balance.high-balance {
+      color: #e74c3c;
+      font-weight: bold;
+    }
+    .editable-input {
+      width: 120px;
+      text-align: center;
+      padding: 4px;
+      border: 1px solid #3498db;
+      border-radius: 4px;
+    }
   </style>
 </head>
 <body>
@@ -94,14 +113,25 @@ async function loadDevices() {
 
   data.forEach(item => {
     totalBalance += item.balance || 0; // 🆕 cộng dồn
+    const deviceValue = item.device || "";
+    const balanceValue = item.balance || 0;
+    const bankValue = item.bank || "";
+    const usernameValue = item.username || "";
+    const accountNumberValue = item.accountNumber || "";
+    const accountHolderValue = item.accountHolder || "";
+    
     tbody.innerHTML += `
       <tr>
-        <td>${item.device || ""}</td>
-        <td>${(item.balance || 0).toLocaleString('vi-VN')} đ</td>
-        <td>${item.bank || ""}</td>
-        <td>${item.username || ""}</td>
-        <td>${item.accountNumber || ""}</td>
-        <td>${item.accountHolder || ""}</td>
+        <td>${deviceValue || "---"}</td>
+        <td>
+          <span class="editable-balance ${balanceValue >= 3000000 ? 'high-balance' : ''}" data-device="${item.device}" data-field="balance">
+            ${balanceValue.toLocaleString('vi-VN')} đ
+          </span>
+        </td>
+        <td>${bankValue || "---"}</td>
+        <td>${usernameValue || "---"}</td>
+        <td>${accountNumberValue || "---"}</td>
+        <td>${accountHolderValue || "---"}</td>
         <td><button class="btn edit-btn" data-device="${item.device}">Sửa</button></td>
         <td><button class="btn delete-btn" data-device="${item.device}">Xóa</button></td>
       </tr>
@@ -185,6 +215,67 @@ document.addEventListener("click", async (e) => {
     editingDevice = device;
     document.getElementById("submitBtn").textContent = "Cập nhật";
   }
+});
+
+// ================= INLINE EDIT BALANCE ONLY =================
+document.addEventListener('click', function(e) {
+  if (!e.target.classList.contains('editable-balance')) return;
+
+  const span = e.target;
+  const device = span.dataset.device;
+  const oldValue = span.innerText.trim().replace(/\s*đ$/, '').replace(/\./g, ''); // Remove " đ" and dots
+
+  const input = document.createElement('input');
+  input.type = 'number';
+  input.value = (oldValue === '---') ? '' : oldValue;
+  input.className = 'editable-input';
+  input.style.width = '150px';
+
+  span.replaceWith(input);
+  input.focus();
+  input.select();
+
+  input.addEventListener('blur', async () => {
+    let newValue = input.value.trim();
+    
+    // Get current device data
+    const res = await fetch(`/api/device-balances/${device}`);
+    const currentData = await res.json();
+    
+    // Update only balance field
+    const updatedData = {
+      device: currentData.device || "",
+      balance: Number(newValue || 0),
+      bank: currentData.bank || "",
+      username: currentData.username || "",
+      accountNumber: currentData.accountNumber || "",
+      accountHolder: currentData.accountHolder || ""
+    };
+
+    try {
+      const updateRes = await fetch(`/api/device-balances/${device}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(updatedData)
+      });
+
+      if (!updateRes.ok) {
+        throw new Error('Cập nhật thất bại');
+      }
+
+      await loadDevices();
+    } catch (err) {
+      console.error("Lỗi khi cập nhật số dư:", err);
+      alert("Cập nhật số dư thất bại!");
+      await loadDevices();
+    }
+  });
+
+  input.addEventListener('keypress', async (e) => {
+    if (e.key === 'Enter') {
+      input.blur();
+    }
+  });
 });
 
 loadDevices();

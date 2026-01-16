@@ -92,6 +92,10 @@
     button.btn-withdraw:hover {
       background: #c0392b;
     }
+    .ratio-high {
+      color: #e74c3c;
+      font-weight: bold;
+    }
   </style>
 </head>
 <body>
@@ -110,10 +114,22 @@
   <button id="refreshBtn" onclick="refreshData()">🔄 Refresh</button>
 
   <!-- thêm controls phân trang cho bảng chính -->
-  <div style="display:flex; justify-content:space-between; align-items:center; margin:8px 0;">
+  <div style="display:flex; justify-content:space-between; align-items:center; margin:8px 0; gap:20px;">
     <div>
       <label>Hiển thị: <strong>15</strong> dòng / trang</label>
       <span class="small-muted"> (bảng tài khoản)</span>
+    </div>
+    <div>
+      <label>Sắp xếp theo:</label>
+      <select id="sortBySelect" onchange="handleSortChange()" style="padding:5px 8px; font-size:14px; border-radius:4px; border:1px solid #ccc;">
+        <option value="default">Trạng Thái + Cược Ngày + Cược Tuần (Mặc định)</option>
+        <option value="totalBetDay">Chỉ Tổng Cược Ngày (Giảm)</option>
+        <option value="totalBetWeek">Chỉ Tổng Cược Tuần (Giảm)</option>
+        <option value="totalBetMonth">Chỉ Tổng Cược Tháng (Giảm)</option>
+        <option value="totalBetAll">Chỉ Tổng Cược (Giảm)</option>
+        <option value="balance">Chỉ Số Dư (Giảm)</option>
+        <option value="status">Chỉ Trạng Thái</option>
+      </select>
     </div>
     <div id="accountsPagination" aria-label="Accounts pagination"></div>
   </div>
@@ -121,15 +137,17 @@
   <table id="tbl">
     <thead>
       <tr>
-        <th>Game</th>
+        <th>STT</th>
         <th>Username</th>
         <th>NickName</th>
         <th>Balance</th>
         <th>Tổng Cược Ngày</th>
         <th>Tổng Cược Tuần</th>
         <th>Tổng Cược Tháng</th>
+        <th>Tổng Cược</th>
         <th>Tổng Nạp</th>
         <th>Tổng Rút</th>
+        <th>Tỷ lệ</th>
         <th>Ngân hàng và STK</th>
         <th>Thiết Bị</th>
         <th>Proxy</th>
@@ -154,14 +172,22 @@ function refreshData() {
   });
 }
 const fmt = n => (Number(n||0)).toLocaleString('vi-VN');
+// API Python chạy port 8080 trên cùng máy: dùng hostname hiện tại để truy cập từ internet
+const api8080Base = `${window.location.protocol}//${window.location.hostname}:8080`;
 
 let profileMap = {};
 let allDevices = [];
+let currentSortBy = 'default'; // Biến lưu loại sắp xếp hiện tại
 let historyData = [];
 let userMap = {};
 let totalsByUser = {}; // { username: { deposit, withdraw } }
 
-
+// Hàm xử lý thay đổi kiểu sắp xếp
+function handleSortChange() {
+  currentSortBy = document.getElementById('sortBySelect').value;
+  currentAccountPage = 1; // Reset về trang 1
+  init(); // Refresh lại dữ liệu
+}
 
 // ====== Phân trang cho bảng tài khoản (mới) ======
 let currentAccountPage = 1;
@@ -291,8 +317,10 @@ async function loadAccountsWithStats() {
       acc.totalBetDay = betMap[acc.username]?.totalDay || 0;
       acc.totalBetWeek = betMap[acc.username]?.totalWeek || 0;
       acc.totalBetMonth = betMap[acc.username]?.totalMonth || 0;
+      acc.totalBetAll = betMap[acc.username]?.total_all || betMap[acc.username]?.totalAll || 0;
       acc.todayDeposit = todayDepositMap[acc.username] || 0;
       acc.todayWithdraw = todayWithdrawMap[acc.username] || 0;
+      acc.balance = Number(profileMap[acc.username]?.balance || 0); // đồng bộ số dư để sắp xếp đúng
 
       // ✅ Tổng nạp/rút theo API GROUP BY (KHÔNG còn phụ thuộc 100 bản ghi)
       acc.totalDeposit = totalsByUser[acc.username]?.deposit || 0;
@@ -313,7 +341,9 @@ async function loadAccountsWithStats() {
 function openDepositModal(username) {
   console.log('🔍 openDepositModal được gọi cho user:', username);
   
-  const amount = prompt(`Nhập số tiền nạp cho user ${username}:`, '200000');
+  // Random từ 200k đến 290k, bội số của 10k
+  const randomAmount = (Math.floor(Math.random() * 10) + 20) * 10000; // 200k-290k
+  const amount = prompt(`Nhập số tiền nạp cho user ${username}:`, randomAmount.toString());
   console.log('💰 Số tiền nhập:', amount);
   if (!amount || amount <= 0) {
     console.log('❌ Số tiền không hợp lệ');
@@ -329,7 +359,7 @@ async function deposit(username, amount) {
     const payload = { username, amount: Number(amount) };
     console.log('📦 Payload gửi đi:', payload);
     
-    const res = await fetch('http://127.0.0.1:8080/api/deposit', {
+    const res = await fetch(`${api8080Base}/api/deposit`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload)
@@ -541,7 +571,7 @@ async function withdraw(username, amount) {
     console.log('📦 Payload gửi đi:', payload);
 
     // Gọi API Flask mới (port 8080)
-    const res = await fetch('http://127.0.0.1:8080/api/withdraw', {
+    const res = await fetch(`${api8080Base}/api/withdraw`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload)
@@ -600,8 +630,68 @@ function renderTable(rows) {
   const tbody = document.querySelector('#tbl tbody');
   tbody.innerHTML = '';
 
+
   // Lọc LC79
-  const filtered = (rows || []).filter(r => (r.game||'').toUpperCase() === 'LC79');
+  let filtered = (rows || []).filter(r => (r.game||'').toUpperCase() === 'LC79');
+
+  // Sắp xếp theo loại được chọn
+  const statusPriority = {
+    'Đang Chơi': 1,
+    'Hết Tiền': 2,
+    'Đủ Ngày': 3,
+    'Đủ Tuần': 4,
+    'Đủ Tháng': 5
+  };
+
+  filtered = filtered.sort((a, b) => {
+    if (currentSortBy === 'default') {
+      // Sắp xếp mặc định: Trạng thái + Cược Ngày + Cược Tuần + Cược Tháng
+      const pa = statusPriority[a.status] || 99;
+      const pb = statusPriority[b.status] || 99;
+      if (pa !== pb) return pa - pb;
+      const betA = Number(a.totalBetDay || 0);
+      const betB = Number(b.totalBetDay || 0);
+      if (betA !== betB) return betB - betA;
+      const weekA = Number(a.totalBetWeek || 0);
+      const weekB = Number(b.totalBetWeek || 0);
+      if (weekA !== weekB) return weekB - weekA;
+      const monthA = Number(a.totalBetMonth || 0);
+      const monthB = Number(b.totalBetMonth || 0);
+      if (monthA !== monthB) return monthB - monthA;
+      return (a.username || '').localeCompare(b.username || '');
+    } else if (currentSortBy === 'totalBetDay') {
+      // Chỉ sắp xếp theo tổng cược ngày
+      const betA = Number(a.totalBetDay || 0);
+      const betB = Number(b.totalBetDay || 0);
+      return betB - betA;
+    } else if (currentSortBy === 'totalBetWeek') {
+      // Chỉ sắp xếp theo tổng cược tuần
+      const weekA = Number(a.totalBetWeek || 0);
+      const weekB = Number(b.totalBetWeek || 0);
+      return weekB - weekA;
+    } else if (currentSortBy === 'totalBetMonth') {
+      // Chỉ sắp xếp theo tổng cược tháng
+      const monthA = Number(a.totalBetMonth || 0);
+      const monthB = Number(b.totalBetMonth || 0);
+      return monthB - monthA;
+    } else if (currentSortBy === 'totalBetAll') {
+      // Chỉ sắp xếp theo tổng cược toàn thời gian
+      const allA = Number(a.totalBetAll || 0);
+      const allB = Number(b.totalBetAll || 0);
+      return allB - allA;
+    } else if (currentSortBy === 'balance') {
+      // Chỉ sắp xếp theo số dư
+      const balA = Number(a.balance || 0);
+      const balB = Number(b.balance || 0);
+      return balB - balA;
+    } else if (currentSortBy === 'status') {
+      // Chỉ sắp xếp theo trạng thái
+      const pa = statusPriority[a.status] || 99;
+      const pb = statusPriority[b.status] || 99;
+      return pa - pb;
+    }
+    return 0;
+  });
 
   // đảm bảo currentAccountPage nằm trong giới hạn
   const totalPages = Math.max(1, Math.ceil(filtered.length / accountPageSize));
@@ -612,24 +702,36 @@ function renderTable(rows) {
   const end = start + accountPageSize;
   const pageItems = filtered.slice(start, end);
 
-  pageItems.forEach(r=>{
+  pageItems.forEach((r, idx) => {
     const uname = r.username;
     const p = profileMap[uname] || {};
     tbody.insertAdjacentHTML('beforeend', `
       <tr style="background:${getRowColor(r.status)}">
-        <td>${(r.game||'')}</td>
+        <td>${(start + idx + 1)}</td>
         <td class="nowrap">${uname}</td>
         <td>${p.nickname || ''}</td>
         <td class="right">${fmt(p.balance)}</td>
         <td class="right">${fmt(r.totalBetDay || 0)}</td>
         <td class="right">${fmt(r.totalBetWeek || 0)}</td>
         <td class="right">${fmt(r.totalBetMonth || 0)}</td>
+        <td class="right">${fmt(r.totalBetAll || 0)}</td>
         <td class="right">${fmt(r.totalDeposit)}</td>
         <td class="right">${fmt(r.totalWithdraw)}</td>
+        <td class="right ${(Number(r.totalDeposit || 0) > 0 && ((Number(r.totalWithdraw || 0) + Number(p.balance || 0)) / Number(r.totalDeposit || 1)) > 1.50) ? 'ratio-high' : ''}">
+          ${Number(r.totalDeposit || 0) > 0 ? ((Number(r.totalWithdraw || 0) + Number(p.balance || 0)) / Number(r.totalDeposit || 1)).toFixed(2) : '0.00'}
+        </td>
         <td>${bankCell(r.bank, r.accountNumber)}</td>
         <td>${deviceEditable(uname, r.device)}</td>
-        <td>${proxyEditable(uname, r.proxy)}</td>
-        <td>${tokenEditable(uname, r.accessToken)}</td>
+        <td style="max-width:130px; min-width:60px; width:130px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">
+          <span class="editable-proxy" data-username="${uname}" data-full="${r.proxy || ''}">
+            ${(r.proxy && r.proxy.length > 18) ? r.proxy.slice(0, 15) + '...' : (r.proxy || '---')}
+          </span>
+        </td>
+        <td style="max-width:130px; min-width:60px; width:130px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">
+          <span class="editable-token" data-username="${uname}" data-full="${r.accessToken || ''}">
+            ${(r.accessToken && r.accessToken.length > 18) ? r.accessToken.slice(0, 15) + '...' : (r.accessToken || '---')}
+          </span>
+        </td>
         <td class="right">${fmt(r.todayDeposit||0)}</td>
         <td class="right">${fmt(r.todayWithdraw||0)}</td>
         <td class="right">
@@ -845,7 +947,7 @@ async function updateStatus(username, status) {
 async function forceCheck(username) {
   try {
     // Gọi API Flask mới
-    const res = await fetch('http://127.0.0.1:8080/api/user-full-check', {
+    const res = await fetch(`${api8080Base}/api/user-full-check`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ username })
@@ -946,7 +1048,7 @@ function buildTodayWithdrawMap() {
 
 async function updateTxnDevice(transactionId, device) {
   try {
-    const res = await fetch(`http://127.0.0.1:8080/api/transactions/${transactionId}/device`, {
+    const res = await fetch(`${api8080Base}/api/transactions/${transactionId}/device`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ device })
@@ -1067,10 +1169,10 @@ document.addEventListener('click', function(e) {
   if (!e.target.classList.contains('editable-proxy')) return;
   const span = e.target;
   const username = span.dataset.username;
-  const oldValue = span.innerText.trim();
+  const fullValue = span.getAttribute('data-full') || '';
   const input = document.createElement('input');
   input.type = 'text';
-  input.value = (oldValue === '---') ? '' : oldValue;
+  input.value = (fullValue === '---') ? '' : fullValue;
   input.className = 'editable-input';
   span.replaceWith(input);
   input.focus();
@@ -1091,10 +1193,10 @@ document.addEventListener('click', function(e) {
   if (!e.target.classList.contains('editable-token')) return;
   const span = e.target;
   const username = span.dataset.username;
-  const oldValue = span.innerText.trim();
+  const fullValue = span.getAttribute('data-full') || '';
   const input = document.createElement('input');
   input.type = 'text';
-  input.value = (oldValue === '---') ? '' : oldValue;
+  input.value = (fullValue === '---') ? '' : fullValue;
   input.className = 'editable-input';
   span.replaceWith(input);
   input.focus();
