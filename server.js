@@ -12,6 +12,8 @@ const timezone = require('dayjs/plugin/timezone');
 dayjs.extend(utc);
 dayjs.extend(timezone);
 
+const schedule = require('node-schedule');
+
 const app = express();
 const PORT = 3000;
 // 🧩 Thêm ở đầu file (sau các require khác)
@@ -149,6 +151,28 @@ db.run(`CREATE TABLE IF NOT EXISTS transaction_details (
   time DATETIME NOT NULL,
   deviceNap TEXT DEFAULT ''
 )`);
+// Daily Profits - Lưu lợi nhuận theo ngày
+db.run(`CREATE TABLE IF NOT EXISTS daily_profits (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  date TEXT NOT NULL UNIQUE,
+  total_deposit INTEGER DEFAULT 0,
+  total_withdraw INTEGER DEFAULT 0,
+  deposit_day INTEGER DEFAULT 0,
+  withdraw_day INTEGER DEFAULT 0,
+  total_balance INTEGER DEFAULT 0,
+  profit INTEGER DEFAULT 0,
+  total_bet_day INTEGER DEFAULT 0,
+  account_count INTEGER DEFAULT 0,
+  created_at DATETIME DEFAULT (datetime('now'))
+)`, (err) => {
+  if (err) console.error("❌ Lỗi khi tạo bảng daily_profits:", err.message);
+  else {
+    console.log("✅ Bảng daily_profits đã sẵn sàng.");
+    // Thêm cột mới nếu chưa có (migration)
+    db.run(`ALTER TABLE daily_profits ADD COLUMN deposit_day INTEGER DEFAULT 0`, () => {});
+    db.run(`ALTER TABLE daily_profits ADD COLUMN withdraw_day INTEGER DEFAULT 0`, () => {});
+  }
+});
 // DeviceReport
 db.run(`CREATE TABLE IF NOT EXISTS device_reports (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -175,14 +199,17 @@ db.run(`CREATE TABLE IF NOT EXISTS bet_history (
   time DATETIME DEFAULT (datetime('now'))
 )`);
 
+
+
 db.run(`
   CREATE TABLE IF NOT EXISTS deposit_orders (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     username TEXT NOT NULL,
+    amount INTEGER,
     accountNumber TEXT,
     accountHolder TEXT,
     transferContent TEXT,
-    status TEXT CHECK(status IN ('pending','processing','completed','failed','cancelled')) DEFAULT 'pending',
+    status TEXT CHECK(status IN ('Chờ Nạp','Đang Nạp','Đã Nạp','Thành Công','Thất Bại','Huỷ')) DEFAULT 'Chờ Nạp',
     createdAt TEXT DEFAULT (datetime('now')),
     updatedAt TEXT DEFAULT (datetime('now'))
   )
@@ -193,12 +220,12 @@ db.run(`
 
 // ------------------- API: Tạo lệnh nạp tiền -------------------
 app.post('/api/deposit-orders', (req, res) => {
-  const { username, accountNumber, accountHolder, transferContent } = req.body;
+  const { username, amount, accountNumber, accountHolder, transferContent } = req.body;
   if (!username) return res.status(400).json({ error: 'Thiếu username' });
 
-  const sql = `INSERT INTO deposit_orders (username, accountNumber, accountHolder, transferContent, status, createdAt, updatedAt)
-               VALUES (?, ?, ?, ?, 'pending', datetime('now'), datetime('now'))`;
-  db.run(sql, [username, accountNumber || '', accountHolder || '', transferContent || ''], function (err) {
+  const sql = `INSERT INTO deposit_orders (username, amount, accountNumber, accountHolder, transferContent, status, createdAt, updatedAt)
+               VALUES (?, ?, ?, ?, ?, 'Chờ Nạp', datetime('now'), datetime('now'))`;
+  db.run(sql, [username, amount || 0, accountNumber || '', accountHolder || '', transferContent || ''], function (err) {
     if (err) {
       console.error("❌ Lỗi khi tạo lệnh nạp:", err.message);
       return res.status(500).json({ error: 'Không thể tạo lệnh nạp' });
@@ -270,6 +297,115 @@ app.put('/api/deposit-orders/:id', (req, res) => {
   });
 });
 
+// ------------------- API: Kiểm tra transferContent trong deposit_orders -------------------
+app.get('/api/deposit-orders/check-transfer-content', (req, res) => {
+  const { transferContent, exact } = req.query;
+
+  if (!transferContent) {
+    return res.status(400).json({ error: 'Thiếu tham số transferContent' });
+  }
+
+  // Nếu exact=true thì tìm chính xác, ngược lại tìm gần đúng (LIKE)
+  const isExact = exact === 'true' || exact === '1';
+  
+  let sql;
+  let params;
+
+  if (isExact) {
+    sql = `SELECT * FROM deposit_orders WHERE transferContent = ? ORDER BY createdAt DESC`;
+    params = [transferContent];
+  } else {
+    sql = `SELECT * FROM deposit_orders WHERE transferContent LIKE ? ORDER BY createdAt DESC`;
+    params = [`%${transferContent}%`];
+  }
+
+  db.all(sql, params, (err, rows) => {
+    if (err) {
+      console.error("❌ Lỗi khi kiểm tra transferContent:", err.message);
+      return res.status(500).json({ error: 'Không thể kiểm tra transferContent', detail: err.message });
+    }
+
+    res.json({
+      success: true,
+      transferContent: transferContent,
+      exact: isExact,
+      count: rows.length,
+      found: rows.length > 0,
+      data: rows
+    });
+  });
+});
+
+// ------------------- API: Lấy danh sách User "Đang Chơi" và users có deposit_orders "Chờ Nạp"/"Đang Nạp"/"Đã Nạp" -------------------
+app.get('/api/active-users-with-deposits', (req, res) => {
+  // Lấy tất cả users có status = 'Đang Chơi'
+  const sqlUsersActive = `SELECT * FROM user_profiles WHERE status = 'Đang Chơi' ORDER BY username`;
+  
+  // Lấy danh sách username từ deposit_orders có status = 'Chờ Nạp', 'Đang Nạp' hoặc 'Đã Nạp'
+  const sqlUsernamesFromOrders = `
+    SELECT DISTINCT username 
+    FROM deposit_orders 
+    WHERE status IN ('Chờ Nạp', 'Đang Nạp', 'Đã Nạp')
+  `;
+
+  // Lấy cả 2 danh sách song song
+  db.all(sqlUsersActive, [], (err, usersActive) => {
+    if (err) {
+      console.error("❌ Lỗi khi lấy danh sách users:", err.message);
+      return res.status(500).json({ error: 'Không thể lấy danh sách users' });
+    }
+
+    db.all(sqlUsernamesFromOrders, [], (err2, usernameRows) => {
+      if (err2) {
+        console.error("❌ Lỗi khi lấy usernames từ deposit_orders:", err2.message);
+        return res.status(500).json({ error: 'Không thể lấy usernames từ deposit_orders' });
+      }
+
+      // Nếu không có username nào từ orders, chỉ trả về users "Đang Chơi"
+      if (usernameRows.length === 0) {
+        return res.json({ 
+          total: usersActive.length,
+          data: usersActive
+        });
+      }
+
+      // Lấy thông tin user_profiles của những username có deposit_orders
+      const usernames = usernameRows.map(row => row.username);
+      const placeholders = usernames.map(() => '?').join(',');
+      const sqlUsersFromOrders = `SELECT * FROM user_profiles WHERE username IN (${placeholders}) ORDER BY username`;
+
+      db.all(sqlUsersFromOrders, usernames, (err3, usersFromOrders) => {
+        if (err3) {
+          console.error("❌ Lỗi khi lấy users từ deposit_orders:", err3.message);
+          return res.status(500).json({ error: 'Không thể lấy users từ deposit_orders' });
+        }
+
+        // Gộp 2 danh sách và loại bỏ trùng lặp (dựa trên username)
+        const userMap = new Map();
+        
+        // Thêm users "Đang Chơi"
+        usersActive.forEach(user => {
+          userMap.set(user.username, user);
+        });
+
+        // Thêm users có deposit_orders
+        usersFromOrders.forEach(user => {
+          userMap.set(user.username, user);
+        });
+
+        // Chuyển Map thành mảng và sắp xếp theo username
+        const uniqueUsers = Array.from(userMap.values()).sort((a, b) => 
+          a.username.localeCompare(b.username)
+        );
+
+        res.json({ 
+          total: uniqueUsers.length,
+          data: uniqueUsers
+        });
+      });
+    });
+  });
+});
 
 // API kiểm tra lệnh nạp đầu tiên trong ngày của 1 user
 app.get('/api/first-deposit-today/:username', (req, res) => {
@@ -513,6 +649,105 @@ function updateTotals(username, amount) {
   });
 }
 
+// ================= Hàm tính toán lợi nhuận ngày hôm nay (không lưu) =================
+async function calculateTodayProfit() {
+  return new Promise((resolve, reject) => {
+    try {
+      const today = dayjs().tz('Asia/Ho_Chi_Minh').format('YYYY-MM-DD');
+      const startOfDay = dayjs().tz('Asia/Ho_Chi_Minh').startOf('day').format('YYYY-MM-DD HH:mm:ss');
+      const endOfDay = dayjs().tz('Asia/Ho_Chi_Minh').endOf('day').format('YYYY-MM-DD HH:mm:ss');
+
+      // 1. Tính tổng nạp/rút từ transaction_details (tất cả thời gian)
+      db.get(`SELECT 
+        SUM(CASE WHEN hinhThuc='Nạp tiền' THEN amount ELSE 0 END) AS deposit,
+        SUM(CASE WHEN hinhThuc='Rút tiền' THEN amount ELSE 0 END) AS withdraw
+        FROM transaction_details`, [], (err1, txnRow) => {
+        if (err1) return reject(err1);
+
+        const totalDeposit = Number(txnRow?.deposit || 0);
+        const totalWithdraw = Number(txnRow?.withdraw || 0);
+
+        // 1b. Tính tổng nạp/rút trong ngày hôm nay
+        db.get(`SELECT 
+          SUM(CASE WHEN hinhThuc='Nạp tiền' THEN amount ELSE 0 END) AS deposit_day,
+          SUM(CASE WHEN hinhThuc='Rút tiền' THEN amount ELSE 0 END) AS withdraw_day
+          FROM transaction_details
+          WHERE time >= ? AND time <= ?`, [startOfDay, endOfDay], (err1b, dayRow) => {
+          if (err1b) return reject(err1b);
+
+          const depositDay = Number(dayRow?.deposit_day || 0);
+          const withdrawDay = Number(dayRow?.withdraw_day || 0);
+
+          // 2. Tính tổng số dư từ user_profiles (chỉ LC79)
+          db.all(`SELECT a.username, u.balance 
+            FROM accounts a 
+            JOIN user_profiles u ON a.username = u.username 
+            WHERE a.game = 'LC79'`, [], (err2, accountRows) => {
+            if (err2) return reject(err2);
+
+            const totalBalance = (accountRows || []).reduce((sum, r) => sum + (Number(r.balance) || 0), 0);
+            const accountCount = accountRows?.length || 0;
+
+            // 3. Tính tổng cược ngày (từ bet_totals, chỉ tính những user có day_start = hôm nay)
+            const todayDateStr = dayjs().tz('Asia/Ho_Chi_Minh').format('YYYY-MM-DD');
+            db.get(`SELECT SUM(total_day) as total FROM bet_totals 
+              WHERE day_start = ?`, [todayDateStr], (err3, betRow) => {
+              if (err3) return reject(err3);
+
+              const totalBetDay = Number(betRow?.total || 0);
+
+              // 4. Tính lợi nhuận: Rút + Số Dư - Nạp
+              const profit = totalWithdraw + totalBalance - totalDeposit;
+
+              resolve({
+                date: today,
+                total_deposit: totalDeposit,
+                total_withdraw: totalWithdraw,
+                deposit_day: depositDay,
+                withdraw_day: withdrawDay,
+                total_balance: totalBalance,
+                profit: profit,
+                total_bet_day: totalBetDay,
+                account_count: accountCount
+              });
+            });
+          });
+        });
+      });
+    } catch (e) {
+      reject(e);
+    }
+  });
+}
+
+// ================= Hàm lưu lợi nhuận ngày hôm nay =================
+async function saveTodayProfit() {
+  try {
+    const today = dayjs().tz('Asia/Ho_Chi_Minh').format('YYYY-MM-DD');
+    console.log(`💾 Bắt đầu lưu lợi nhuận ngày: ${today}`);
+
+    // Sử dụng hàm calculateTodayProfit để tính toán
+    const todayData = await calculateTodayProfit();
+
+    // Lưu vào database
+    return new Promise((resolve, reject) => {
+      db.run(`INSERT OR REPLACE INTO daily_profits 
+        (date, total_deposit, total_withdraw, deposit_day, withdraw_day, total_balance, profit, total_bet_day, account_count)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [todayData.date, todayData.total_deposit, todayData.total_withdraw, 
+         todayData.deposit_day, todayData.withdraw_day, todayData.total_balance, 
+         todayData.profit, todayData.total_bet_day, todayData.account_count],
+        function(err) {
+          if (err) return reject(err);
+          console.log(`✅ Đã lưu lợi nhuận ngày ${today}:`, todayData);
+          resolve(todayData);
+        });
+    });
+  } catch (e) {
+    throw e;
+  }
+}
+
 // API cập nhật streak
 app.post("/streaks/update", (req, res) => {
   const { username, result } = req.body;
@@ -628,6 +863,30 @@ app.get("/streaks/:username", (req, res) => {
       current_len: row.current_len,
       updated_at: row.updated_at
     });
+  });
+});
+
+// ------------------- API: Lấy tài khoản Hết Tiền sắp xếp theo lần nạp Thành Công gần nhất -------------------
+app.get('/api/accounts/out-of-money', (req, res) => {
+  const sql = `
+    SELECT 
+      a.*,
+      MAX(d.createdAt) as lastSuccessfulDeposit
+    FROM accounts a
+    LEFT JOIN deposit_orders d ON a.username = d.username AND d.status = 'Thành Công'
+    WHERE a.status = 'Hết Tiền'
+      AND a.username NOT IN (
+        SELECT username FROM deposit_orders WHERE status IN ('Chờ Nạp','Đang Nạp','Đã Nạp')
+      )
+    GROUP BY a.username
+    ORDER BY lastSuccessfulDeposit ASC
+  `;
+  db.all(sql, [], (err, rows) => {
+    if (err) {
+      console.error("❌ Lỗi khi lấy tài khoản Hết Tiền:", err.message);
+      return res.status(500).json({ error: err.message });
+    }
+    res.json(rows || []);
   });
 });
 
@@ -2051,7 +2310,6 @@ app.post('/api/transaction-details', (req, res) => {
           }
 
           const device = acc.device;
-          console.log(`💰 Cộng ${amount} vào device ${device} (từ giao dịch rút của ${username})`);
 
           // Kiểm tra device có tồn tại chưa
           db.get(`SELECT * FROM device_balances WHERE device = ?`, [device], (err4, rowDevice) => {
@@ -2067,7 +2325,6 @@ app.post('/api/transaction-details', (req, res) => {
                 [amount, device],
                 function (err5) {
                   if (err5) console.error("❌ Lỗi khi cộng tiền device:", err5.message);
-                  else console.log(`✅ Đã cộng ${amount} vào device ${device}, balance mới ≈ ${rowDevice.balance + amount}`);
                 }
               );
             } else {
@@ -2109,7 +2366,6 @@ app.post('/api/transaction-details', (req, res) => {
               responseData.isFirstDepositToday = true;
               responseData.isEligibleForBonus = true;
               responseData.message = `🎉 Lệnh nạp ĐẦU TIÊN trong ngày >= 200k`;
-              console.log(`🎉 [${username}] ${responseData.message}: ${amount.toLocaleString('vi-VN')}đ`);
             } else {
               responseData.isFirstDepositToday = false;
               responseData.isEligibleForBonus = false;
@@ -2353,6 +2609,48 @@ app.get('/api/transactions/grouped/by-user', (req, res) => {
   });
 });
 
+// ------------------- API: Lấy lịch sử lợi nhuận theo ngày -------------------
+app.get('/api/daily-profits', async (req, res) => {
+  try {
+    const { from, to, limit = 30 } = req.query;
+    const today = dayjs().tz('Asia/Ho_Chi_Minh').format('YYYY-MM-DD');
+    
+    let sql = `SELECT * FROM daily_profits ORDER BY date DESC`;
+    const params = [];
+    
+    if (from && to) {
+      sql += ` WHERE date BETWEEN ? AND ?`;
+      params.push(from, to);
+    } else {
+      sql += ` LIMIT ?`;
+      params.push(Number(limit));
+    }
+    
+    db.all(sql, params, async (err, rows) => {
+      if (err) return res.status(500).json({ error: err.message });
+      
+      // Kiểm tra xem đã có dữ liệu ngày hôm nay chưa
+      const hasToday = rows.some(r => r.date === today);
+      
+      // Nếu chưa có dữ liệu ngày hôm nay, tính toán và thêm vào
+      if (!hasToday) {
+        try {
+          const todayData = await calculateTodayProfit();
+          // Thêm vào đầu danh sách (ngày mới nhất)
+          rows.unshift(todayData);
+        } catch (calcErr) {
+          console.error('Lỗi khi tính toán dữ liệu ngày hôm nay:', calcErr);
+          // Tiếp tục trả về dữ liệu đã có, không báo lỗi
+        }
+      }
+      
+      res.json({ data: rows });
+    });
+  } catch (e) {
+    res.status(500).json({ error: String(e) });
+  }
+});
+
 // ------------------- Cập nhật device cho transaction -------------------
 app.put('/api/transactions/:transactionId/device', (req, res) => {
   const { transactionId } = req.params;
@@ -2515,6 +2813,72 @@ async function notifyAndUpdate(user, type, target, status) {
 //   }
 // });
 // =========================================
+
+// ================= Tự động lưu lợi nhuận vào cuối ngày (23:59:59 giờ VN +7) =================
+// Schedule job chạy vào 23:59:59 mỗi ngày theo múi giờ VN
+schedule.scheduleJob('59 23 * * *', async () => {
+  const nowVN = dayjs().tz('Asia/Ho_Chi_Minh');
+  console.log(`🕐 [${nowVN.format('YYYY-MM-DD HH:mm:ss')}] Tự động lưu lợi nhuận ngày hôm nay...`);
+  
+  try {
+    const result = await saveTodayProfit();
+    console.log(`✅ [${nowVN.format('YYYY-MM-DD HH:mm:ss')}] Đã tự động lưu lợi nhuận ngày ${result.date}`);
+  } catch (e) {
+    console.error(`❌ [${nowVN.format('YYYY-MM-DD HH:mm:ss')}] Lỗi khi tự động lưu lợi nhuận:`, e);
+  }
+});
+
+console.log('✅ Schedule job đã được thiết lập: Tự động lưu lợi nhuận vào 23:59:59 mỗi ngày (giờ VN +7)');
+
+// ------------------- API Khởi Chạy Lệnh CMD -------------------
+app.post('/api/run-command', (req, res) => {
+  const { command } = req.body;
+  const { spawn } = require('child_process');
+
+  if (!command) {
+    return res.status(400).json({ error: 'Thiếu tham số command' });
+  }
+
+  let cmd, args, cwd;
+
+  switch (command) {
+    case 'lc79':
+      cmd = 'cmd';
+      args = ['/c', 'start', 'cmd', '/k', 'cd /d C:\\Users\\Quang\\Documents\\LC79 && python main.py'];
+      break;
+    case 'banking':
+      cmd = 'cmd';
+      args = ['/c', 'start', 'cmd', '/k', 'cd /d C:\\Users\\Quang\\Documents\\Banking && python main.py'];
+      break;
+    case 'pm2':
+      cmd = 'cmd';
+      args = ['/c', 'start', 'cmd', '/k', 'pm2 logs'];
+      break;
+    default:
+      return res.status(400).json({ error: 'Lệnh không hợp lệ' });
+  }
+
+  try {
+    const process = spawn(cmd, args, {
+      detached: true,
+      stdio: 'ignore'
+    });
+    
+    process.unref(); // Cho phép process cha tiếp tục mà không đợi process con
+    
+    res.json({ 
+      success: true, 
+      message: `Đã khởi chạy lệnh: ${command}` 
+    });
+  } catch (error) {
+    console.error('❌ Lỗi khi khởi chạy lệnh:', error);
+    res.status(500).json({ 
+      error: 'Không thể khởi chạy lệnh', 
+      detail: error.message 
+    });
+  }
+});
+
 app.listen(PORT, (err) => {
   if (err) return console.error("❌ Lỗi khi khởi động server:", err);
   console.log(`Server  1 running on http://0.0.0.0:${PORT}`);
