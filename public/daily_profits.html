@@ -1,0 +1,352 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8" />
+  <title>Lợi Nhuận Theo Ngày</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      padding: 20px;
+      background: #f7f8fa;
+      margin: 0;
+    }
+    h1 {
+      color: #2c3e50;
+      margin-bottom: 20px;
+    }
+    .controls {
+      display: flex;
+      gap: 10px;
+      margin-bottom: 20px;
+      align-items: center;
+      flex-wrap: wrap;
+    }
+    .controls input[type="date"] {
+      padding: 8px;
+      border: 1px solid #ccc;
+      border-radius: 4px;
+      font-size: 14px;
+    }
+    .controls button {
+      padding: 8px 16px;
+      background: #3498db;
+      color: white;
+      border: none;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 14px;
+    }
+    .controls button:hover {
+      background: #2980b9;
+    }
+    .summary-box {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+      gap: 15px;
+      margin-bottom: 20px;
+    }
+    .summary-item {
+      background: white;
+      padding: 15px;
+      border-radius: 8px;
+      box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    }
+    .summary-item label {
+      display: block;
+      color: #7f8c8d;
+      font-size: 13px;
+      margin-bottom: 5px;
+    }
+    .summary-item .value {
+      font-size: 20px;
+      font-weight: bold;
+      color: #2c3e50;
+    }
+    .summary-item.profit .value {
+      color: #27ae60;
+    }
+    .summary-item.profit.negative .value {
+      color: #e74c3c;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      background: white;
+      border-radius: 8px;
+      overflow: hidden;
+      box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    }
+    th, td {
+      padding: 12px;
+      text-align: center;
+      border-bottom: 1px solid #eee;
+    }
+    th {
+      background: #3498db;
+      color: white;
+      font-weight: bold;
+      position: sticky;
+      top: 0;
+      z-index: 1;
+    }
+    tr:hover {
+      background: #f8f9fa;
+    }
+    .right {
+      text-align: right;
+    }
+    .profit-positive {
+      color: #27ae60;
+      font-weight: bold;
+    }
+    .profit-negative {
+      color: #e74c3c;
+      font-weight: bold;
+    }
+    .loading {
+      text-align: center;
+      padding: 40px;
+      color: #7f8c8d;
+    }
+    .error {
+      background: #fee;
+      color: #c33;
+      padding: 15px;
+      border-radius: 4px;
+      margin: 20px 0;
+    }
+    #refreshBtn {
+      background: #2ecc71;
+    }
+    #refreshBtn:hover {
+      background: #27ae60;
+    }
+  </style>
+</head>
+<body>
+  <h1>📊 Lợi Nhuận Theo Ngày</h1>
+
+  <div class="controls">
+    <button id="refreshBtn" onclick="loadData()">🔄 Refresh</button>
+    <input type="date" id="dateFrom" />
+    <span>đến</span>
+    <input type="date" id="dateTo" />
+    <button onclick="filterByDate()">🔍 Lọc</button>
+    <button onclick="clearFilter()">❌ Xóa lọc</button>
+    <span style="margin-left: auto; color: #7f8c8d;">
+      Tổng: <strong id="totalRecords">0</strong> ngày
+    </span>
+  </div>
+
+  <div class="summary-box" id="summaryBox" style="display: none;">
+    <div class="summary-item">
+      <label>Tổng Nạp</label>
+      <div class="value" id="sumDeposit">0</div>
+    </div>
+    <div class="summary-item">
+      <label>Tổng Rút</label>
+      <div class="value" id="sumWithdraw">0</div>
+    </div>
+    <div class="summary-item">
+      <label>Tổng Số Dư</label>
+      <div class="value" id="sumBalance">0</div>
+    </div>
+    <div class="summary-item profit" id="summaryProfit">
+      <label>Lợi Nhuận</label>
+      <div class="value" id="sumProfit">0</div>
+    </div>
+    <div class="summary-item">
+      <label>Tổng Cược Ngày</label>
+      <div class="value" id="sumBetDay">0</div>
+    </div>
+  </div>
+
+  <div id="loading" class="loading">Đang tải dữ liệu...</div>
+  <div id="error" class="error" style="display: none;"></div>
+
+  <table id="profitsTable" style="display: none;">
+    <thead>
+      <tr>
+        <th>STT</th>
+        <th>Ngày</th>
+        <th class="right">Tổng Nạp Ngày</th>
+        <th class="right">Tổng Rút Ngày</th>
+        <th class="right">Số Dư</th>
+        <th class="right">Lợi Nhuận (Tích lũy)</th>
+        <th class="right">Lợi Nhuận Ngày</th>
+        <th class="right">Tổng Cược Ngày</th>
+        <th>Số Tài Khoản</th>
+      </tr>
+    </thead>
+    <tbody id="profitsBody">
+    </tbody>
+  </table>
+
+  <script>
+    const fmt = n => (Number(n || 0)).toLocaleString('vi-VN');
+
+    async function loadData() {
+      const loading = document.getElementById('loading');
+      const error = document.getElementById('error');
+      const table = document.getElementById('profitsTable');
+      const summaryBox = document.getElementById('summaryBox');
+
+      loading.style.display = 'block';
+      error.style.display = 'none';
+      table.style.display = 'none';
+      summaryBox.style.display = 'none';
+
+      try {
+        const from = document.getElementById('dateFrom').value;
+        const to = document.getElementById('dateTo').value;
+        
+        let url = '/api/daily-profits';
+        if (from && to) {
+          url += `?from=${from}&to=${to}`;
+        } else {
+          url += '?limit=30';
+        }
+
+        const res = await fetch(url);
+        if (!res.ok) throw new Error('Không thể tải dữ liệu');
+        
+        const data = await res.json();
+        const profits = data.data || [];
+
+        loading.style.display = 'none';
+        table.style.display = 'table';
+        summaryBox.style.display = 'grid';
+
+        renderTable(profits);
+        renderSummary(profits);
+        document.getElementById('totalRecords').textContent = profits.length;
+
+      } catch (e) {
+        loading.style.display = 'none';
+        error.style.display = 'block';
+        error.textContent = '❌ Lỗi: ' + e.message;
+        console.error('Lỗi load data:', e);
+      }
+    }
+
+    function renderTable(profits) {
+      const tbody = document.getElementById('profitsBody');
+      tbody.innerHTML = '';
+
+      if (profits.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="9" style="text-align:center; padding:40px; color:#7f8c8d;">Không có dữ liệu</td></tr>';
+        return;
+      }
+
+      // Sắp xếp theo ngày giảm dần (ngày mới nhất lên trên) để tính lợi nhuận ngày đúng
+      const sortedProfits = [...profits].sort((a, b) => b.date.localeCompare(a.date));
+      // Tạo bản sao sắp xếp tăng dần để tính lợi nhuận ngày
+      const sortedAsc = [...profits].sort((a, b) => a.date.localeCompare(b.date));
+
+      sortedProfits.forEach((p, idx) => {
+        const profit = Number(p.profit || 0);
+        const profitClass = profit >= 0 ? 'profit-positive' : 'profit-negative';
+        const profitSign = profit >= 0 ? '+' : '';
+
+        // Tính lợi nhuận ngày: tìm vị trí trong sortedAsc để tính chênh lệch
+        const ascIdx = sortedAsc.findIndex(item => item.date === p.date);
+        let dailyProfit = profit;
+        if (ascIdx > 0) {
+          const prevProfit = Number(sortedAsc[ascIdx - 1].profit || 0);
+          dailyProfit = profit - prevProfit;
+        }
+
+        const dailyProfitClass = dailyProfit >= 0 ? 'profit-positive' : 'profit-negative';
+        const dailyProfitSign = dailyProfit >= 0 ? '+' : '';
+
+        const tr = document.createElement('tr');
+        tr.innerHTML = `
+          <td>${idx + 1}</td>
+          <td><strong>${p.date}</strong></td>
+          <td class="right">${fmt(p.deposit_day || 0)}</td>
+          <td class="right">${fmt(p.withdraw_day || 0)}</td>
+          <td class="right">${fmt(p.total_balance)}</td>
+          <td class="right ${profitClass}">${profitSign}${fmt(profit)}</td>
+          <td class="right ${dailyProfitClass}">${dailyProfitSign}${fmt(dailyProfit)}</td>
+          <td class="right">${fmt(p.total_bet_day)}</td>
+          <td>${p.account_count || 0}</td>
+        `;
+        tbody.appendChild(tr);
+      });
+    }
+
+    function renderSummary(profits) {
+      // Dashboard: lấy dữ liệu từ record mới nhất (ngày hôm nay)
+      let sumDepositAll = 0, sumWithdrawAll = 0;
+      let todayBalance = 0, todayProfit = 0, todayBetDay = 0;
+
+      if (profits.length > 0) {
+        // Sắp xếp tăng dần để tính lợi nhuận ngày
+        const sortedAsc = [...profits].sort((a, b) => a.date.localeCompare(b.date));
+        const latest = profits[0]; // Đã sắp xếp DESC nên [0] là mới nhất (ngày hôm nay)
+        
+        // Tổng Nạp và Tổng Rút: tổng all từ record mới nhất
+        sumDepositAll = Number(latest.total_deposit || 0);
+        sumWithdrawAll = Number(latest.total_withdraw || 0);
+        
+        // Tổng Số Dư: số dư hiện tại của ngày hôm nay
+        todayBalance = Number(latest.total_balance || 0);
+        
+        // Lợi Nhuận Ngày: chênh lệch giữa ngày hôm nay và ngày hôm qua
+        const todayIdx = sortedAsc.findIndex(item => item.date === latest.date);
+        if (todayIdx > 0) {
+          const prevProfit = Number(sortedAsc[todayIdx - 1].profit || 0);
+          const todayProfitTíchLũy = Number(latest.profit || 0);
+          todayProfit = todayProfitTíchLũy - prevProfit;
+        } else {
+          // Nếu là ngày đầu tiên, lợi nhuận ngày = lợi nhuận tích lũy
+          todayProfit = Number(latest.profit || 0);
+        }
+        
+        // Tổng Cược Ngày: từ record mới nhất
+        todayBetDay = Number(latest.total_bet_day || 0);
+      }
+
+      document.getElementById('sumDeposit').textContent = fmt(sumDepositAll);
+      document.getElementById('sumWithdraw').textContent = fmt(sumWithdrawAll);
+      document.getElementById('sumBalance').textContent = fmt(todayBalance);
+      document.getElementById('sumProfit').textContent = fmt(todayProfit);
+      document.getElementById('sumBetDay').textContent = fmt(todayBetDay);
+      
+      // Cập nhật màu cho lợi nhuận
+      const profitItem = document.getElementById('summaryProfit');
+      if (todayProfit >= 0) {
+        profitItem.classList.remove('negative');
+      } else {
+        profitItem.classList.add('negative');
+      }
+    }
+
+    function filterByDate() {
+      const from = document.getElementById('dateFrom').value;
+      const to = document.getElementById('dateTo').value;
+      
+      if (!from || !to) {
+        alert('Vui lòng chọn cả ngày bắt đầu và ngày kết thúc');
+        return;
+      }
+
+      if (from > to) {
+        alert('Ngày bắt đầu phải nhỏ hơn hoặc bằng ngày kết thúc');
+        return;
+      }
+
+      loadData();
+    }
+
+    function clearFilter() {
+      document.getElementById('dateFrom').value = '';
+      document.getElementById('dateTo').value = '';
+      loadData();
+    }
+
+    // Load dữ liệu khi trang được tải
+    loadData();
+  </script>
+</body>
+</html>
