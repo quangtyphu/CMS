@@ -240,25 +240,33 @@ app.get('/api/deposit-orders', (req, res) => {
   const limit = Math.max(1, parseInt(req.query.limit) || 50);
   const offset = (page - 1) * limit;
   const status = req.query.status; // filter theo status nếu có
+  const username = req.query.username; // filter theo username nếu có
 
-  let sqlCount = `SELECT COUNT(*) as total FROM deposit_orders`;
-  let sqlData = `SELECT * FROM deposit_orders`;
+  const conditions = [];
   const params = [];
 
   if (status) {
-    sqlCount += ` WHERE status = ?`;
-    sqlData += ` WHERE status = ?`;
+    conditions.push(`status = ?`);
     params.push(status);
   }
 
-  sqlData += ` ORDER BY createdAt DESC LIMIT ? OFFSET ?`;
-  params.push(limit, offset);
+  if (username) {
+    conditions.push(`username LIKE ?`);
+    params.push(`%${username}%`);
+  }
 
-  db.get(sqlCount, status ? [status] : [], (err, countRow) => {
+  const whereClause = conditions.length ? ` WHERE ${conditions.join(' AND ')}` : '';
+  let sqlCount = `SELECT COUNT(*) as total FROM deposit_orders${whereClause}`;
+  let sqlData = `SELECT * FROM deposit_orders${whereClause}`;
+
+  sqlData += ` ORDER BY createdAt DESC LIMIT ? OFFSET ?`;
+  const paramsData = [...params, limit, offset];
+
+  db.get(sqlCount, params, (err, countRow) => {
     if (err) return res.status(500).json({ error: err.message });
     const total = countRow?.total || 0;
 
-    db.all(sqlData, params, (err2, rows) => {
+    db.all(sqlData, paramsData, (err2, rows) => {
       if (err2) return res.status(500).json({ error: err2.message });
       res.json({ page, limit, totalItems: total, totalPages: Math.ceil(total / limit), data: rows });
     });
@@ -1812,25 +1820,43 @@ app.get('/api/transactions/summary/day', (req, res) => {
 app.get('/api/transactions/all', (req, res) => {
   const page = parseInt(req.query.page) || 1;    // trang hiện tại
   const limit = parseInt(req.query.limit) || 20; // số dòng mỗi trang
+  const max = parseInt(req.query.max) || 0;      // giới hạn tổng số bản ghi nếu cần
+  const username = (req.query.username || '').trim();
   const offset = (page - 1) * limit;
 
+  const whereSql = username ? `WHERE username = ?` : '';
+  const whereParams = username ? [username] : [];
+
   // 1️⃣ Đếm tổng số bản ghi
-  const sqlCount = `SELECT COUNT(*) as total FROM transaction_details`;
-  db.get(sqlCount, [], (err, countRow) => {
+  const sqlCount = max > 0
+    ? `SELECT COUNT(*) as total FROM (SELECT 1 FROM transaction_details ${whereSql} ORDER BY time DESC LIMIT ?)`
+    : `SELECT COUNT(*) as total FROM transaction_details ${whereSql}`;
+  const countParams = max > 0 ? [...whereParams, max] : [...whereParams];
+  db.get(sqlCount, countParams, (err, countRow) => {
     if (err) {
       console.error("❌ Lỗi khi đếm giao dịch:", err.message);
       return res.status(500).json({ error: "Lỗi server" });
     }
 
     const total = countRow.total;
+    const effectiveLimit = max > 0 ? Math.min(limit, Math.max(0, max - offset)) : limit;
+    if (effectiveLimit <= 0) {
+      return res.json({
+        page,
+        totalPages: Math.ceil(total / limit),
+        totalItems: total,
+        data: []
+      });
+    }
 
     // 2️⃣ Lấy dữ liệu theo trang (🆕 thêm transactionId)
     const sqlData = `SELECT username, deviceNap AS device, hinhThuc AS type, amount, time, transactionId
                      FROM transaction_details
+                     ${whereSql}
                      ORDER BY time DESC
                      LIMIT ? OFFSET ?`;
 
-    db.all(sqlData, [limit, offset], (err2, rows) => {
+    db.all(sqlData, [...whereParams, effectiveLimit, offset], (err2, rows) => {
       if (err2) {
         console.error("❌ Lỗi khi lấy giao dịch:", err2.message);
         return res.status(500).json({ error: "Lỗi server" });
