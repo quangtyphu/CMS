@@ -2,7 +2,7 @@
 <html lang="vi">
 <head>
   <meta charset="UTF-8" />
-  <title>Quản Lý Nạp Rút</title>
+  <title>Lịch Sử Giao Dịch</title>
   <script src="https://cdn.jsdelivr.net/npm/axios/dist/axios.min.js"></script>
   <style>
     body { font-family: sans-serif; padding: 20px; }
@@ -27,7 +27,7 @@
   </style>
 </head>
 <body>
-  <h1>Quản Lý Nạp Rút</h1>
+  <h1>Lịch Sử Giao Dịch</h1>
 
     <div id="stats" style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; margin-top: 15px; margin-bottom: 20px;">
     <div class="stat-box"><strong>Tổng nạp ngày:</strong> <span id="dayDeposit">0</span></div>
@@ -39,6 +39,11 @@
     <div class="stat-box"><strong>Tổng nạp (all):</strong> <span id="allDeposit">0</span></div>
     <div class="stat-box"><strong>Tổng rút (all):</strong> <span id="allWithdraw">0</span></div>
     </div>
+
+  <div style="margin-top: 10px; margin-bottom: 10px;">
+    <input id="searchUsername" type="text" placeholder="Tìm theo username" style="padding: 6px 8px; min-width: 220px;">
+    <button onclick="loadPage(1)" style="padding: 6px 10px;">Tìm</button>
+  </div>
 
   <table>
     <thead>
@@ -56,18 +61,28 @@
 
   <script>
     const limit = 20;
+    const max = 100;
 
     function loadPage(page = 1) {
-      axios.get(`/api/transactions/all?page=${page}&limit=${limit}`)
+      const username = document.getElementById('searchUsername').value.trim();
+      const params = new URLSearchParams({
+        page,
+        limit,
+        max
+      });
+      if (username) params.set('username', username);
+
+      axios.get(`/api/transactions/all?${params.toString()}`)
         .then(res => {
           const tbody = document.getElementById('dataBody');
           tbody.innerHTML = '';
 
           res.data.data.forEach(tx => {
             const tr = document.createElement('tr');
+            const isDeposit = tx.type === 'Nạp tiền';
             tr.innerHTML = `
               <td>${tx.username}</td>
-              <td class="${tx.type === 'deposit' ? 'deposit' : 'withdraw'}">${tx.type}</td>
+              <td class="${isDeposit ? 'deposit' : 'withdraw'}">${tx.type}</td>
               <td>${tx.amount.toLocaleString()}</td>
               <td>${tx.time}</td>
             `;

@@ -102,15 +102,6 @@
 
   <h2>Dashboard – Game LC79</h2>
 
-  <!-- ✅ Box tổng hợp -->
-  <div id="summaryBox" style="margin:12px 0; font-weight:bold; font-size:15px; background:#fff; padding:10px; border-radius:8px;">
-    <p>Tổng Nạp: <span id="sumDeposit">0</span></p>
-    <p>Tổng Rút: <span id="sumWithdraw">0</span></p>
-    <p>Số Dư: <span id="sumBalance">0</span></p>
-    <p>Lợi Nhuận: <span id="sumProfit">0</span></p>
-    <p>Tổng Cược Ngày: <span id="sumTotalDay">0</span></p>
-  </div>
-
   <button id="refreshBtn" onclick="refreshData()">🔄 Refresh</button>
 
   <!-- thêm controls phân trang cho bảng chính -->
@@ -754,7 +745,6 @@ function renderTable(rows) {
   // cập nhật phân trang cho bảng accounts
   renderAccountsPagination(filtered.length, totalPages, currentAccountPage);
 
-  renderSummary(rows);
 }
 
 function renderAccountsPagination(totalItems, totalPages, currentPageLocal) {
@@ -819,44 +809,6 @@ function renderTableFromCurrent() {
   loadAccountsWithStats();
 }
 
-// ================= SUMMARY (dùng totalsByUser) =================
-function renderSummary(rows) {
-  try {
-    // 1) Tổng nạp/rút toàn hệ thống từ totalsByUser (đã GROUP BY ở backend)
-    let sumDeposit = 0, sumWithdraw = 0;
-    Object.values(totalsByUser).forEach(v => {
-      sumDeposit  += Number(v?.deposit  || 0);
-      sumWithdraw += Number(v?.withdraw || 0);
-    });
-
-    // 2) Tổng số dư: cộng balance của các account LC79 đang render (tất cả, không chỉ 1 trang)
-    let sumBalance = 0;
-    rows
-      .filter(r => (r.game || '').toUpperCase() === 'LC79')
-      .forEach(r => {
-        sumBalance += Number(profileMap[r.username]?.balance || 0);
-      });
-
-    // 2b) Tổng cược ngày của tất cả user (chỉ tính cho LC79)
-    let sumTotalDay = 0;
-    rows
-      .filter(r => (r.game || '').toUpperCase() === 'LC79')
-      .forEach(r => { sumTotalDay += Number(r.totalBetDay || 0); });
-
-    // 3) Lợi nhuận = Rút + Số Dư - Nạp
-    const profit = sumWithdraw + sumBalance - sumDeposit;
-
-    // 4) Cập nhật UI
-    document.getElementById("sumDeposit").innerText  = sumDeposit.toLocaleString('vi-VN');
-    document.getElementById("sumWithdraw").innerText = sumWithdraw.toLocaleString('vi-VN');
-    document.getElementById("sumBalance").innerText  = sumBalance.toLocaleString('vi-VN');
-    document.getElementById("sumProfit").innerText   = profit.toLocaleString('vi-VN');
-    document.getElementById("sumTotalDay").innerText = (sumTotalDay || 0).toLocaleString('vi-VN');
-  } catch (err) {
-    console.error("Lỗi renderSummary:", err);
-  }
-}
-
 // ================= EDITABLE CELLS =================
 function proxyEditable(username, value) {
   const safe = value || '---';
@@ -875,7 +827,7 @@ function getRowColor(status) {
     case 'Proxy Lỗi':
     case 'Token Lỗi': return '#ff6666';    // 🔴 đỏ đậm
     case 'Đủ Ngày':   return '#e6ccff';      // 💜 tím nhạt
-    case 'Đủ Tháng':  return '#000000';    // 🆕 MÀU ĐEN
+    case 'Đủ Tháng':  return '#8a0303';    // 🩸 đỏ máu
     case 'Đủ Tuần':   return '#fff3b0';     // 🌟 vàng nhạt
     default: return '#ffffff';              // trắng
   }

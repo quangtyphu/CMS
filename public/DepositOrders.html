@@ -110,7 +110,7 @@
 <div class="filter-bar">
   <button class="btn-create" onclick="openCreateModal()">➕ Tạo Lệnh Mới</button>
   <label>Trạng Thái:</label>
-  <select id="filterStatus" onchange="loadOrders()">
+  <select id="filterStatus" onchange="onFilterStatusChange()">
     <option value="">Tất cả</option>
     <option value="Chờ Nạp">Chờ Nạp</option>
     <option value="Đang Nạp">Đang Nạp</option>
@@ -119,6 +119,8 @@
     <option value="Thất Bại">Thất Bại</option>
     <option value="Huỷ">Huỷ</option>
   </select>
+  <label>Username:</label>
+  <input id="filterUsername" type="text" placeholder="Nhập username..." oninput="onFilterUsernameInput()" />
   <button onclick="loadOrders()">🔄 Refresh</button>
 </div>
 
@@ -204,13 +206,41 @@ const pageSize = 20;
 let totalItems = 0;
 let totalPages = 0;
 let currentStatus = '';
+let currentUsername = '';
+let usernameSearchTimer = null;
+
+function onFilterStatusChange() {
+  currentPage = 1;
+  const select = document.getElementById('filterStatus');
+  updateFilterStatusStyle(select);
+  loadOrders();
+}
+
+function onFilterUsernameInput() {
+  currentPage = 1;
+  if (usernameSearchTimer) clearTimeout(usernameSearchTimer);
+  usernameSearchTimer = setTimeout(() => {
+    loadOrders();
+  }, 300);
+}
+
+function updateFilterStatusStyle(select) {
+  const baseClass = 'status-select';
+  select.className = baseClass;
+  if (!select.value) return;
+  const statusClass = `status-${select.value.replace(/\s+/g, '-')}`;
+  select.classList.add(statusClass);
+}
 
 // ========== LOAD ORDERS ==========
 async function loadOrders() {
   try {
     currentStatus = document.getElementById('filterStatus').value;
+    const usernameInput = document.getElementById('filterUsername');
+    currentUsername = usernameInput ? usernameInput.value.trim() : '';
     const params = new URLSearchParams({ page: currentPage, limit: pageSize });
     if (currentStatus) params.append('status', currentStatus);
+    if (currentUsername) params.append('username', currentUsername);
 
     const res = await fetch(`/api/deposit-orders?${params}`);
     const data = await res.json();
@@ -489,6 +519,7 @@ function formatAmount(amount) {
 
 // ========== INIT ==========
 loadOrders();
+updateFilterStatusStyle(document.getElementById('filterStatus'));
 
 // Close modal khi click bên ngoài
 window.onclick = function(event) {
