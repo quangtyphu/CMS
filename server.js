@@ -149,8 +149,38 @@ db.run(`CREATE TABLE IF NOT EXISTS transaction_details (
   transactionId TEXT NOT NULL,
   amount INTEGER NOT NULL,
   time DATETIME NOT NULL,
+  db_time DATETIME,
+  status TEXT DEFAULT 'pending',
+  reason TEXT,
+  content TEXT,
   deviceNap TEXT DEFAULT ''
 )`);
+// Migration: thêm db_time nếu chưa có
+db.run(`ALTER TABLE transaction_details ADD COLUMN db_time DATETIME`, () => {});
+// Migration: thêm status nếu chưa có
+db.get("PRAGMA table_info(transaction_details)", (err, columns) => {
+  if (err) return;
+  const hasStatus = Array.isArray(columns) && columns.some(col => col.name === 'status');
+  if (!hasStatus) {
+    db.run("ALTER TABLE transaction_details ADD COLUMN status TEXT DEFAULT 'pending'", () => {});
+  }
+});
+// Migration: thêm reason nếu chưa có
+db.get("PRAGMA table_info(transaction_details)", (err, columns) => {
+  if (err) return;
+  const hasReason = Array.isArray(columns) && columns.some(col => col.name === 'reason');
+  if (!hasReason) {
+    db.run("ALTER TABLE transaction_details ADD COLUMN reason TEXT", () => {});
+  }
+});
+// Migration: thêm content nếu chưa có
+db.get("PRAGMA table_info(transaction_details)", (err, columns) => {
+  if (err) return;
+  const hasContent = Array.isArray(columns) && columns.some(col => col.name === 'content');
+  if (!hasContent) {
+    db.run("ALTER TABLE transaction_details ADD COLUMN content TEXT", () => {});
+  }
+});
 // Daily Profits - Lưu lợi nhuận theo ngày
 db.run(`CREATE TABLE IF NOT EXISTS daily_profits (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -665,10 +695,10 @@ async function calculateTodayProfit() {
       const startOfDay = dayjs().tz('Asia/Ho_Chi_Minh').startOf('day').format('YYYY-MM-DD HH:mm:ss');
       const endOfDay = dayjs().tz('Asia/Ho_Chi_Minh').endOf('day').format('YYYY-MM-DD HH:mm:ss');
 
-      // 1. Tính tổng nạp/rút từ transaction_details (tất cả thời gian)
+      // 1. Tính tổng nạp/rút từ transaction_details
       db.get(`SELECT 
         SUM(CASE WHEN hinhThuc='Nạp tiền' THEN amount ELSE 0 END) AS deposit,
-        SUM(CASE WHEN hinhThuc='Rút tiền' THEN amount ELSE 0 END) AS withdraw
+        SUM(CASE WHEN hinhThuc='Rút tiền' AND status IN ('Thành Công', 'pending') THEN amount ELSE 0 END) AS withdraw
         FROM transaction_details`, [], (err1, txnRow) => {
         if (err1) return reject(err1);
 
@@ -678,9 +708,9 @@ async function calculateTodayProfit() {
         // 1b. Tính tổng nạp/rút trong ngày hôm nay
         db.get(`SELECT 
           SUM(CASE WHEN hinhThuc='Nạp tiền' THEN amount ELSE 0 END) AS deposit_day,
-          SUM(CASE WHEN hinhThuc='Rút tiền' THEN amount ELSE 0 END) AS withdraw_day
+          SUM(CASE WHEN hinhThuc='Rút tiền' AND status IN ('Thành Công', 'pending') THEN amount ELSE 0 END) AS withdraw_day
           FROM transaction_details
-          WHERE time >= ? AND time <= ?`, [startOfDay, endOfDay], (err1b, dayRow) => {
+          WHERE time IS NOT NULL AND time >= ? AND time <= ?`, [startOfDay, endOfDay], (err1b, dayRow) => {
           if (err1b) return reject(err1b);
 
           const depositDay = Number(dayRow?.deposit_day || 0);
@@ -1593,10 +1623,10 @@ app.post('/api/accounts/deposit', (req, res) => {
     }
 
     // thêm TransactionDetail (thay cho Transaction mongoose)
-    const sqlInsertTxn = `INSERT INTO transaction_details (username, hinhThuc, transactionId, amount, time, deviceNap) 
-                          VALUES (?, 'Nạp tiền', ?, ?, datetime('now'), ?)`;
+    const sqlInsertTxn = `INSERT INTO transaction_details (username, hinhThuc, transactionId, amount, time, db_time, deviceNap, status) 
+                          VALUES (?, 'Nạp tiền', ?, ?, datetime('now'), datetime('now','localtime'), ?, ?)`;
     const txnId = `TXN_${Date.now()}`;
-    db.run(sqlInsertTxn, [username, txnId, numericAmount, fromDevice || ""], (err2) => {
+    db.run(sqlInsertTxn, [username, txnId, numericAmount, fromDevice || "", "pending"], (err2) => {
       if (err2) {
         console.error("❌ Lỗi khi thêm TransactionDetail:", err2.message);
       }
@@ -1687,9 +1717,9 @@ app.post('/api/accounts/withdraw', (req, res) => {
       // 3️⃣ Thêm TransactionDetail (ghi lại giao dịch)
       const txnId = `TXN_${Date.now()}`;
       const sqlInsertTxn = `INSERT INTO transaction_details 
-        (username, hinhThuc, transactionId, amount, time, deviceNap) 
-        VALUES (?, 'Rút tiền', ?, ?, datetime('now'), ?)`;
-      db.run(sqlInsertTxn, [username, txnId, numericAmount, acc.device || ""], (err3) => {
+        (username, hinhThuc, transactionId, amount, time, db_time, deviceNap, status) 
+        VALUES (?, 'Rút tiền', ?, ?, datetime('now'), datetime('now','localtime'), ?, ?)`;
+      db.run(sqlInsertTxn, [username, txnId, numericAmount, acc.device || "", "pending"], (err3) => {
         if (err3) {
           console.error("❌ Lỗi khi thêm TransactionDetail:", err3.message);
         }
@@ -1850,10 +1880,10 @@ app.get('/api/transactions/all', (req, res) => {
     }
 
     // 2️⃣ Lấy dữ liệu theo trang (🆕 thêm transactionId)
-    const sqlData = `SELECT username, deviceNap AS device, hinhThuc AS type, amount, time, transactionId
+    const sqlData = `SELECT username, deviceNap AS device, hinhThuc AS type, amount, time, db_time, transactionId, status
                      FROM transaction_details
                      ${whereSql}
-                     ORDER BY time DESC
+                     ORDER BY db_time DESC, time DESC
                      LIMIT ? OFFSET ?`;
 
     db.all(sqlData, [...whereParams, effectiveLimit, offset], (err2, rows) => {
@@ -1869,7 +1899,9 @@ app.get('/api/transactions/all', (req, res) => {
         type: t.type,
         amount: t.amount,
         transactionId: t.transactionId,   // 🆕 trả thêm mã giao dịch
-        time: dayjs(t.time).tz('Asia/Ho_Chi_Minh').format('YYYY-MM-DD HH:mm:ss')
+        status: t.status,
+        time: dayjs(t.time).tz('Asia/Ho_Chi_Minh').format('YYYY-MM-DD HH:mm:ss'),
+        dbTime: t.db_time ? dayjs(t.db_time).tz('Asia/Ho_Chi_Minh').format('YYYY-MM-DD HH:mm:ss') : null
       }));
 
       res.json({
@@ -2290,7 +2322,7 @@ app.get('/api/bet-history/stats', (req, res) => {
 
 // ===================== API: Lưu giao dịch + cập nhật số dư device nếu là Rút tiền =====================
 app.post('/api/transaction-details', (req, res) => {
-  const { username, nickname, hinhThuc, transactionId, amount, time, deviceNap } = req.body;
+  const { username, nickname, hinhThuc, transactionId, amount, time, deviceNap, status, reason, content } = req.body;
 
   if (!username || !hinhThuc || !transactionId || !amount) {
     return res.status(400).json({ error: "Thiếu dữ liệu bắt buộc (username, hinhThuc, transactionId, amount)" });
@@ -2311,11 +2343,28 @@ app.post('/api/transaction-details', (req, res) => {
     // 2️⃣ Nếu chưa có → Insert mới
     const sqlInsert = `
       INSERT INTO transaction_details 
-      (username, nickname, hinhThuc, transactionId, amount, time, deviceNap) 
-      VALUES (?, ?, ?, ?, ?, ?, ?)
+      (username, nickname, hinhThuc, transactionId, amount, time, db_time, deviceNap, status, reason, content) 
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `;
+    const dbTime = dayjs().tz('Asia/Ho_Chi_Minh').format("YYYY-MM-DD HH:mm:ss");
 
-    db.run(sqlInsert, [username, nickname || "", hinhThuc, transactionId, amount, time || dayjs().format("YYYY-MM-DD HH:mm:ss"), deviceNap || ""], function (err2) {
+    const normalizedStatus = status || "pending";
+    db.run(
+      sqlInsert,
+      [
+        username,
+        nickname || "",
+        hinhThuc,
+        transactionId,
+        amount,
+        time || dayjs().format("YYYY-MM-DD HH:mm:ss"),
+        dbTime,
+        deviceNap || "",
+        normalizedStatus,
+        reason || "",
+        content || "",
+      ],
+      function (err2) {
       if (err2) {
         console.error("❌ Lỗi khi lưu transaction_details:", err2.message);
         return res.status(500).json({ error: "Không thể lưu transaction", detail: err2.message });
@@ -2375,7 +2424,8 @@ app.post('/api/transaction-details', (req, res) => {
         transactionId: transactionId,
         type: hinhThuc,
         amount: amount,
-        username: username
+        username: username,
+        status: normalizedStatus
       };
       
       // Thêm thông tin nếu là lệnh nạp đầu tiên trong ngày >= 200k (đồng nhất với API kiểm tra)
@@ -2493,7 +2543,7 @@ app.put('/api/device-balances/:device', (req, res) => {
         await run(`UPDATE user_profiles SET device = ? WHERE device = ?`, [targetDevice, oldDevice]);
         await run(`UPDATE accounts SET device = ? WHERE device = ?`, [targetDevice, oldDevice]);
         await run(`UPDATE proxies SET device = ? WHERE device = ?`, [targetDevice, oldDevice]);
-        await run(`UPDATE transaction_details SET deviceNap = ? WHERE deviceNap = ?`, [targetDevice, oldDevice]);
+        await run(`UPDATE transaction_details SET deviceNap = ?, db_time = datetime('now','localtime') WHERE deviceNap = ?`, [targetDevice, oldDevice]);
         await run(`UPDATE bet_history SET device = ? WHERE device = ?`, [targetDevice, oldDevice]);
         // (tuỳ chọn) device_reports.devices là JSON -> nếu cần, xử lý sau
       }
@@ -2677,6 +2727,159 @@ app.get('/api/daily-profits', async (req, res) => {
   }
 });
 
+// ------------------- API: Lợi nhuận theo ngày từ transaction_details -------------------
+app.get('/api/transaction-profits', (req, res) => {
+  const page = parseInt(req.query.page) || 1;
+  const limit = parseInt(req.query.limit) || 20;
+  const offset = (page - 1) * limit;
+  const username = (req.query.username || '').trim();
+  const { from, to } = req.query;
+
+  const whereParts = [];
+  const whereParams = [];
+
+  whereParts.push('db_time IS NOT NULL');
+
+  if (username) {
+    whereParts.push('username = ?');
+    whereParams.push(username);
+  }
+
+  if (from && to) {
+    whereParts.push('date(db_time) BETWEEN ? AND ?');
+    whereParams.push(from, to);
+  }
+
+  const whereSql = whereParts.length ? `WHERE ${whereParts.join(' AND ')}` : '';
+
+  const sqlCount = `
+    SELECT COUNT(*) as total
+    FROM (
+      SELECT date(db_time) as date
+      FROM transaction_details
+      ${whereSql}
+      GROUP BY date(db_time)
+    )
+  `;
+
+  db.get(sqlCount, whereParams, (err, countRow) => {
+    if (err) {
+      console.error("❌ Lỗi khi đếm ngày lợi nhuận:", err.message);
+      return res.status(500).json({ error: "Lỗi server" });
+    }
+
+    const totalItems = Number(countRow?.total || 0);
+    const totalPages = Math.max(1, Math.ceil(totalItems / limit));
+
+    const sqlData = `
+      SELECT date(db_time) as date,
+             SUM(CASE WHEN hinhThuc='Nạp tiền' THEN amount ELSE 0 END) AS deposit_day,
+             SUM(CASE WHEN hinhThuc='Rút tiền' AND status IN ('Thành Công', 'pending') THEN amount ELSE 0 END) AS withdraw_day
+      FROM transaction_details
+      ${whereSql}
+      GROUP BY date(db_time)
+      ORDER BY date DESC
+      LIMIT ? OFFSET ?
+    `;
+
+    db.all(sqlData, [...whereParams, limit, offset], (err2, rows) => {
+      if (err2) {
+        console.error("❌ Lỗi khi lấy lợi nhuận theo ngày:", err2.message);
+        return res.status(500).json({ error: "Lỗi server" });
+      }
+
+      const data = (rows || []).map(r => {
+        const deposit = Number(r.deposit_day || 0);
+        const withdraw = Number(r.withdraw_day || 0);
+        return {
+          date: r.date,
+          deposit_day: deposit,
+          withdraw_day: withdraw,
+          profit: deposit - withdraw
+        };
+      });
+
+      res.json({
+        page,
+        totalPages,
+        totalItems,
+        data
+      });
+    });
+  });
+});
+
+// ------------------- Cập nhật giao dịch theo transactionId -------------------
+app.put('/api/transaction-details/:transactionId', (req, res) => {
+  const { transactionId } = req.params;
+  const { status, reason, content, amount, time } = req.body;
+
+  const fields = [];
+  const values = [];
+
+  if (status !== undefined) {
+    fields.push("status = ?");
+    values.push(status);
+  }
+  if (reason !== undefined) {
+    fields.push("reason = ?");
+    values.push(reason);
+  }
+  if (content !== undefined) {
+    fields.push("content = ?");
+    values.push(content);
+  }
+  if (amount !== undefined) {
+    fields.push("amount = ?");
+    values.push(amount);
+  }
+  if (time !== undefined) {
+    fields.push("time = ?");
+    values.push(time);
+  }
+
+  if (fields.length === 0) {
+    return res.status(400).json({ error: "Thiếu dữ liệu cập nhật" });
+  }
+
+  fields.push("db_time = datetime('now','localtime')");
+  const sql = `UPDATE transaction_details SET ${fields.join(", ")} WHERE transactionId = ?`;
+  values.push(transactionId);
+
+  db.run(sql, values, function (err) {
+    if (err) {
+      console.error("❌ Lỗi khi cập nhật transaction_details:", err.message);
+      return res.status(500).json({ error: "Không thể cập nhật transaction", detail: err.message });
+    }
+    if (this.changes === 0) {
+      return res.status(404).json({ error: "Transaction không tồn tại" });
+    }
+    res.json({ success: true });
+  });
+});
+
+// ------------------- Cập nhật status cho transaction -------------------
+app.put('/api/transactions/:transactionId/status', (req, res) => {
+  const { transactionId } = req.params;
+  const { status } = req.body;
+
+  if (!status) {
+    return res.status(400).json({ error: "Thiếu status" });
+  }
+
+  const sql = `UPDATE transaction_details SET status = ?, db_time = datetime('now','localtime') WHERE transactionId = ?`;
+  db.run(sql, [status, transactionId], function (err) {
+    if (err) {
+      console.error("❌ Lỗi khi cập nhật status:", err.message);
+      return res.status(500).json({ error: "Không thể cập nhật status", detail: err.message });
+    }
+    if (this.changes === 0) {
+      return res.status(404).json({ error: "Transaction không tồn tại" });
+    }
+    res.json({ success: true });
+  });
+});
+
 // ------------------- Cập nhật device cho transaction -------------------
 app.put('/api/transactions/:transactionId/device', (req, res) => {
   const { transactionId } = req.params;
@@ -2686,7 +2889,7 @@ app.put('/api/transactions/:transactionId/device', (req, res) => {
     return res.status(400).json({ error: "Thiếu device" });
   }
 
-  const sql = `UPDATE transaction_details SET deviceNap = ? WHERE transactionId = ?`;
+  const sql = `UPDATE transaction_details SET deviceNap = ?, db_time = datetime('now','localtime') WHERE transactionId = ?`;
   db.run(sql, [device, transactionId], function (err) {
     if (err) {
       console.error("❌ Lỗi khi cập nhật device:", err.message);

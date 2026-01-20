@@ -1,0 +1,210 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8" />
+  <title>Lợi Nhuận Giao Dịch</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <style>
+    :root { --blue:#3498db; --green:#2ecc71; --red:#e74c3c; --gray:#f7f8fa; }
+    body{font-family:Arial, sans-serif; background:var(--gray); margin:0; padding:20px;}
+    h2{margin:0 0 12px;}
+    button{padding:6px 12px; border:none; border-radius:4px; background:var(--blue); color:#fff; cursor:pointer; font-size:13px;}
+    button:hover{background:#2980b9;}
+    table{width:100%; border-collapse:collapse; background:#fff; border-radius:10px; overflow:hidden; margin-top:12px;}
+    th, td{border:1px solid #eee; padding:10px; text-align:center; font-size:14px;}
+    th{background:var(--blue); color:#fff; position:sticky; top:0; z-index:1;}
+    #pagination { margin-top:10px; text-align:center; }
+    #pagination button { margin:0 4px; }
+    #pagination button.active { background:var(--green); }
+    .filter-bar{display:flex; gap:10px; align-items:center; margin:12px 0; flex-wrap:wrap;}
+    .filter-bar label{font-weight:bold;}
+    .filter-bar input{padding:6px; border-radius:4px; border:1px solid #ccc;}
+    .right{text-align:right;}
+    .profit-positive{color:#27ae60; font-weight:bold;}
+    .profit-negative{color:#e74c3c; font-weight:bold;}
+  </style>
+</head>
+<body>
+
+<h2>📊 Lợi Nhuận Giao Dịch</h2>
+
+<div class="filter-bar">
+  <label>Từ ngày:</label>
+  <input id="filterFrom" type="date" />
+  <label>Đến ngày:</label>
+  <input id="filterTo" type="date" />
+  <label>Username:</label>
+  <input id="filterUsername" type="text" placeholder="Nhập username..." />
+  <button onclick="applyFilter()">🔍 Lọc</button>
+  <button onclick="clearFilter()">❌ Xóa lọc</button>
+  <button onclick="loadProfits()">🔄 Refresh</button>
+</div>
+
+<table>
+  <thead>
+    <tr>
+      <th>STT</th>
+      <th>Ngày</th>
+      <th class="right">Tổng Nạp</th>
+      <th class="right">Tổng Rút</th>
+      <th class="right">Lợi Nhuận</th>
+    </tr>
+  </thead>
+  <tbody id="profitsBody"></tbody>
+</table>
+
+<div id="pagination"></div>
+
+<script>
+let currentPage = 1;
+const pageSize = 20;
+let totalItems = 0;
+let totalPages = 0;
+let currentFrom = '';
+let currentTo = '';
+let currentUsername = '';
+
+function applyFilter() {
+  const from = document.getElementById('filterFrom').value;
+  const to = document.getElementById('filterTo').value;
+  const username = document.getElementById('filterUsername').value.trim();
+
+  if ((from && !to) || (!from && to)) {
+    alert('Vui lòng chọn cả ngày bắt đầu và ngày kết thúc');
+    return;
+  }
+
+  if (from && to && from > to) {
+    alert('Ngày bắt đầu phải nhỏ hơn hoặc bằng ngày kết thúc');
+    return;
+  }
+
+  currentFrom = from;
+  currentTo = to;
+  currentUsername = username;
+  currentPage = 1;
+  loadProfits();
+}
+
+function clearFilter() {
+  document.getElementById('filterFrom').value = '';
+  document.getElementById('filterTo').value = '';
+  document.getElementById('filterUsername').value = '';
+  currentFrom = '';
+  currentTo = '';
+  currentUsername = '';
+  currentPage = 1;
+  loadProfits();
+}
+
+async function loadProfits() {
+  try {
+    const params = new URLSearchParams({ page: currentPage, limit: pageSize });
+    if (currentFrom && currentTo) {
+      params.append('from', currentFrom);
+      params.append('to', currentTo);
+    }
+    if (currentUsername) params.append('username', currentUsername);
+
+    const res = await fetch(`/api/transaction-profits?${params}`);
+    const data = await res.json();
+
+    totalItems = data.totalItems || 0;
+    totalPages = data.totalPages || 1;
+
+    renderProfits(data.data || []);
+    renderPagination();
+  } catch (err) {
+    console.error('❌ Lỗi khi load lợi nhuận:', err);
+    alert('Không thể tải dữ liệu lợi nhuận');
+  }
+}
+
+function renderProfits(rows) {
+  const tbody = document.getElementById('profitsBody');
+  tbody.innerHTML = '';
+
+  if (rows.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="5" style="text-align:center; color:#999;">Không có dữ liệu</td></tr>';
+    return;
+  }
+
+  rows.forEach((row, idx) => {
+    const profit = Number(row.profit || 0);
+    const profitClass = profit >= 0 ? 'profit-positive' : 'profit-negative';
+    const profitSign = profit >= 0 ? '+' : '';
+
+    const tr = document.createElement('tr');
+    tr.innerHTML = `
+      <td>${(currentPage - 1) * pageSize + idx + 1}</td>
+      <td><strong>${row.date}</strong></td>
+      <td class="right">${formatAmount(row.deposit_day || 0)}</td>
+      <td class="right">${formatAmount(row.withdraw_day || 0)}</td>
+      <td class="right ${profitClass}">${profitSign}${formatAmount(profit)}</td>
+    `;
+    tbody.appendChild(tr);
+  });
+}
+
+function renderPagination() {
+  const container = document.getElementById('pagination');
+  container.innerHTML = '';
+
+  if (totalPages <= 1) {
+    container.innerHTML = `<span style="color:#999;">Tổng ${totalItems} ngày</span>`;
+    return;
+  }
+
+  const firstBtn = document.createElement('button');
+  firstBtn.innerText = '<<';
+  firstBtn.disabled = currentPage === 1;
+  firstBtn.onclick = () => { currentPage = 1; loadProfits(); };
+  container.appendChild(firstBtn);
+
+  const prevBtn = document.createElement('button');
+  prevBtn.innerText = '<';
+  prevBtn.disabled = currentPage === 1;
+  prevBtn.onclick = () => { currentPage = Math.max(1, currentPage - 1); loadProfits(); };
+  container.appendChild(prevBtn);
+
+  const maxButtons = 7;
+  let start = Math.max(1, currentPage - Math.floor(maxButtons / 2));
+  let end = Math.min(totalPages, start + maxButtons - 1);
+  if (end - start < maxButtons - 1) start = Math.max(1, end - maxButtons + 1);
+
+  for (let i = start; i <= end; i++) {
+    const btn = document.createElement('button');
+    btn.innerText = i;
+    if (i === currentPage) btn.classList.add('active');
+    btn.onclick = () => { currentPage = i; loadProfits(); };
+    container.appendChild(btn);
+  }
+
+  const nextBtn = document.createElement('button');
+  nextBtn.innerText = '>';
+  nextBtn.disabled = currentPage === totalPages;
+  nextBtn.onclick = () => { currentPage = Math.min(totalPages, currentPage + 1); loadProfits(); };
+  container.appendChild(nextBtn);
+
+  const lastBtn = document.createElement('button');
+  lastBtn.innerText = '>>';
+  lastBtn.disabled = currentPage === totalPages;
+  lastBtn.onclick = () => { currentPage = totalPages; loadProfits(); };
+  container.appendChild(lastBtn);
+
+  const info = document.createElement('span');
+  info.style.marginLeft = '10px';
+  info.style.color = '#666';
+  info.innerText = `Trang ${currentPage}/${totalPages} - Tổng ${totalItems} ngày`;
+  container.appendChild(info);
+}
+
+function formatAmount(amount) {
+  return new Intl.NumberFormat('vi-VN').format(Number(amount || 0));
+}
+
+loadProfits();
+</script>
+
+</body>
+</html>

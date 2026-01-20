@@ -11,6 +11,7 @@
     th { background: #f2f2f2; }
     .deposit { color: green; }
     .withdraw { color: red; }
+    .time-mismatch { background: #ffe5e5; }
     #pagination { margin-top: 15px; text-align: center; }
     #pagination button {
       margin: 0 3px;
@@ -51,7 +52,9 @@
         <th>User Name</th>
         <th>Loại</th>
         <th>Số tiền</th>
-        <th>Thời gian (+7)</th>
+        <th>Thời gian Game (+7)</th>
+        <th>Thời gian DB (+7)</th>
+        <th>Trạng thái</th>
       </tr>
     </thead>
     <tbody id="dataBody"></tbody>
@@ -62,6 +65,14 @@
   <script>
     const limit = 20;
     const max = 100;
+
+    function parseLocalDateTime(value) {
+      if (!value || typeof value !== 'string') return null;
+      const normalized = value.includes('T') ? value : value.replace(' ', 'T');
+      const date = new Date(normalized);
+      if (Number.isNaN(date.getTime())) return null;
+      return date;
+    }
 
     function loadPage(page = 1) {
       const username = document.getElementById('searchUsername').value.trim();
@@ -80,11 +91,21 @@
           res.data.data.forEach(tx => {
             const tr = document.createElement('tr');
             const isDeposit = tx.type === 'Nạp tiền';
+            const dbTimeText = tx.dbTime || '---';
+            const gameTime = parseLocalDateTime(tx.time);
+            const dbTime = parseLocalDateTime(tx.dbTime);
+            const statusText = tx.status || '---';
+            if (gameTime && dbTime) {
+              const diffMinutes = Math.abs(gameTime - dbTime) / 60000;
+              if (diffMinutes >= 10) tr.classList.add('time-mismatch');
+            }
             tr.innerHTML = `
               <td>${tx.username}</td>
               <td class="${isDeposit ? 'deposit' : 'withdraw'}">${tx.type}</td>
               <td>${tx.amount.toLocaleString()}</td>
               <td>${tx.time}</td>
+              <td>${dbTimeText}</td>
+              <td>${statusText}</td>
             `;
             tbody.appendChild(tr);
           });
