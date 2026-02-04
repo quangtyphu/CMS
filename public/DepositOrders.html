@@ -132,6 +132,7 @@
       <th>Username</th>
       <th>Số Tiền</th>
       <th>STK Nhận</th>
+      <th>Ngân Hàng</th>
       <th>Tên Người Nhận</th>
       <th>Nội Dung CK</th>
       <th>Trạng Thái</th>
@@ -168,6 +169,11 @@
       <div class="form-group">
         <label>STK Người Nhận</label>
         <input type="text" id="accountNumber" />
+      </div>
+
+      <div class="form-group">
+        <label>Ngân Hàng</label>
+        <input type="text" id="bank" />
       </div>
 
       <div class="form-group">
@@ -262,7 +268,7 @@ function renderOrders(orders) {
   tbody.innerHTML = '';
 
   if (orders.length === 0) {
-    tbody.innerHTML = '<tr><td colspan="10" style="text-align:center; color:#999;">Không có dữ liệu</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="11" style="text-align:center; color:#999;">Không có dữ liệu</td></tr>';
     return;
   }
 
@@ -275,6 +281,7 @@ function renderOrders(orders) {
         <td><strong>${order.username}</strong></td>
         <td><strong style="color:#2ecc71;">${formatAmount(order.amount)}</strong></td>
         <td>${order.accountNumber || '<span style="color:#999;">---</span>'}</td>
+        <td>${order.bank || order.bankCode || '<span style="color:#999;">---</span>'}</td>
         <td>${order.accountHolder || '<span style="color:#999;">---</span>'}</td>
         <td>${order.transferContent || '<span style="color:#999;">---</span>'}</td>
         <td>
@@ -384,6 +391,7 @@ async function openEditModal(id) {
     document.getElementById('username').value = order.username;
     document.getElementById('amount').value = order.amount || '';
     document.getElementById('accountNumber').value = order.accountNumber || '';
+    document.getElementById('bank').value = order.bank || '';
     document.getElementById('accountHolder').value = order.accountHolder || '';
     document.getElementById('transferContent').value = order.transferContent || '';
     document.getElementById('status').value = order.status;
@@ -407,11 +415,12 @@ async function submitOrder(event) {
   const username = document.getElementById('username').value.trim();
   const amount = parseInt(document.getElementById('amount').value) || 0;
   const accountNumber = document.getElementById('accountNumber').value.trim();
+  const bank = document.getElementById('bank').value.trim();
   const accountHolder = document.getElementById('accountHolder').value.trim();
   const transferContent = document.getElementById('transferContent').value.trim();
   const status = document.getElementById('status').value;
 
-  const payload = { username, amount, accountNumber, accountHolder, transferContent };
+  const payload = { username, amount, accountNumber, bank, accountHolder, transferContent };
   if (id) payload.status = status;
 
   try {

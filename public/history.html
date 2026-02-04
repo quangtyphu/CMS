@@ -2,7 +2,7 @@
 <html lang="vi">
 <head>
   <meta charset="UTF-8" />
-  <title>Lịch Sử Giao Dịch</title>
+  <title>Lịch Sử Rút Tiền</title>
   <script src="https://cdn.jsdelivr.net/npm/axios/dist/axios.min.js"></script>
   <style>
     body { font-family: sans-serif; padding: 20px; }
@@ -10,7 +10,8 @@
     th, td { border: 1px solid #ccc; padding: 8px; text-align: center; }
     th { background: #f2f2f2; }
     .deposit { color: green; }
-    .withdraw { color: red; }
+    .withdraw { color: #007bff; }
+    tr.withdraw td { color: #007bff; }
     .time-mismatch { background: #ffe5e5; }
     #pagination { margin-top: 15px; text-align: center; }
     #pagination button {
@@ -28,7 +29,7 @@
   </style>
 </head>
 <body>
-  <h1>Lịch Sử Giao Dịch</h1>
+  <h1>Lịch Sử Rút Tiền</h1>
 
     <div id="stats" style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; margin-top: 15px; margin-bottom: 20px;">
     <div class="stat-box"><strong>Tổng nạp ngày:</strong> <span id="dayDeposit">0</span></div>
@@ -81,6 +82,7 @@
         limit,
         max
       });
+      params.set('type', 'Rút tiền');
       if (username) params.set('username', username);
 
       axios.get(`/api/transactions/all?${params.toString()}`)
@@ -99,6 +101,7 @@
               const diffMinutes = Math.abs(gameTime - dbTime) / 60000;
               if (diffMinutes >= 10) tr.classList.add('time-mismatch');
             }
+            if (!isDeposit) tr.classList.add('withdraw');
             tr.innerHTML = `
               <td>${tx.username}</td>
               <td class="${isDeposit ? 'deposit' : 'withdraw'}">${tx.type}</td>

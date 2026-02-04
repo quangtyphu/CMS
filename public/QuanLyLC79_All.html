@@ -987,7 +987,7 @@ function buildTodayWithdrawMap() {
   const todayWithdrawMap = {};
 
   historyData.forEach(txn => {
-    if (txn.type === "Rút tiền") {
+    if (txn.type === "Rút tiền" && txn.status === "Thành công") {
       const t = new Date(txn.time).getTime();
       if (t >= startOfDay && t < endOfDay) {
         todayWithdrawMap[txn.username] = (todayWithdrawMap[txn.username] || 0) + Number(txn.amount || 0);
