@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Config Editor</title>
+  <link rel="stylesheet" href="style.css" />
+  <style>
+    body { padding: 16px; }
+    .bar { display: flex; gap: 8px; align-items: center; margin-bottom: 12px; }
+    .bar button { padding: 6px 12px; }
+    #status { font-size: 14px; }
+    textarea { width: 100%; height: 70vh; font-family: Consolas, monospace; }
+  </style>
+</head>
+<body>
+  <h2>Config Editor</h2>
+  <div class="bar">
+    <select id="config-target">
+      <option value="lc79">LC79 config.json</option>
+      <option value="banking-devices">Banking devices.json</option>
+    </select>
+    <button id="btn-load">Tải config</button>
+    <button id="btn-save">Lưu config</button>
+    <span id="status"></span>
+  </div>
+  <textarea id="config-text" placeholder="Đang tải config..."></textarea>
+  <script src="js/config.js"></script>
+</body>
+</html>

@@ -81,6 +81,13 @@
 
     <!-- Danh sách device -->
     <h2 class="section-title">Danh sách Device</h2>
+    <div class="form-row">
+      <input type="text" id="filterBank" placeholder="Lọc theo ngân hàng">
+      <input type="text" id="filterUsername" placeholder="Tìm theo tên đăng nhập">
+      <input type="text" id="filterDevice" placeholder="Tìm theo device">
+      <input type="number" id="filterMinBalance" placeholder="Số dư >= " min="0">
+      <button type="button" class="btn" id="clearFiltersBtn">Xóa lọc</button>
+    </div>
     <h3 id="totalBalanceDisplay">Tổng số dư: 0 đ</h3>
     <table id="deviceTable">
       <thead>
@@ -102,16 +109,21 @@
 <script>
 let isEditMode = false;
 let editingDevice = '';
+let allDevices = [];
 
 async function loadDevices() {
   const res = await fetch("/api/device-balances");
   const data = await res.json();
+  allDevices = Array.isArray(data) ? data : [];
+  applyFilters();
+}
+
+function renderDevices(list) {
   const tbody = document.querySelector("#deviceTable tbody");
   tbody.innerHTML = "";
-
   let totalBalance = 0; // 🆕 tạo biến tổng
 
-  data.forEach(item => {
+  list.forEach(item => {
     totalBalance += item.balance || 0; // 🆕 cộng dồn
     const deviceValue = item.device || "";
     const balanceValue = item.balance || 0;
@@ -141,6 +153,28 @@ async function loadDevices() {
   // 🆕 hiển thị tổng số dư ra thẻ h3 đã tạo
   document.getElementById("totalBalanceDisplay").textContent =
     "Tổng số dư: " + totalBalance.toLocaleString('vi-VN') + " đ";
+}
+
+function applyFilters() {
+  const bankFilter = document.getElementById("filterBank").value.trim().toLowerCase();
+  const usernameFilter = document.getElementById("filterUsername").value.trim().toLowerCase();
+  const deviceFilter = document.getElementById("filterDevice").value.trim().toLowerCase();
+  const minBalanceRaw = document.getElementById("filterMinBalance").value.trim();
+  const minBalance = minBalanceRaw === "" ? null : Number(minBalanceRaw) * 1000000;
+
+  const filtered = allDevices.filter(item => {
+    const bank = (item.bank || "").toLowerCase();
+    const username = (item.username || "").toLowerCase();
+    const device = (item.device || "").toLowerCase();
+    const balance = Number(item.balance || 0);
+    const bankOk = !bankFilter || bank.includes(bankFilter);
+    const userOk = !usernameFilter || username.includes(usernameFilter);
+    const deviceOk = !deviceFilter || device.includes(deviceFilter);
+    const balanceOk = minBalance === null || (Number.isFinite(minBalance) && balance >= minBalance);
+    return bankOk && userOk && deviceOk && balanceOk;
+  });
+
+  renderDevices(filtered);
 }
 
 function readForm() {
@@ -191,6 +225,18 @@ document.getElementById("deviceForm").addEventListener("submit", async (e) => {
 
   resetForm();
   loadDevices();
+});
+
+document.getElementById("filterBank").addEventListener("input", applyFilters);
+document.getElementById("filterUsername").addEventListener("input", applyFilters);
+document.getElementById("filterDevice").addEventListener("input", applyFilters);
+document.getElementById("filterMinBalance").addEventListener("input", applyFilters);
+document.getElementById("clearFiltersBtn").addEventListener("click", () => {
+  document.getElementById("filterBank").value = "";
+  document.getElementById("filterUsername").value = "";
+  document.getElementById("filterDevice").value = "";
+  document.getElementById("filterMinBalance").value = "";
+  applyFilters();
 });
 
 

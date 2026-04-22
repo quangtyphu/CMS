@@ -1,0 +1,157 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Lịch Sử Hòm Quà</title>
+  <script src="https://cdn.jsdelivr.net/npm/axios/dist/axios.min.js"></script>
+  <style>
+    :root { --blue:#3498db; --gray:#f7f8fa; --text:#2c3e50; }
+    body { font-family: Arial, sans-serif; background: var(--gray); margin: 0; padding: 20px; color: var(--text); }
+    h1 { margin: 0 0 14px; font-size: 1.35rem; }
+    .filter-bar { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin-bottom: 14px; }
+    .filter-bar label { font-weight: 600; }
+    .filter-bar input, .filter-bar select { padding: 7px 10px; border: 1px solid #ccc; border-radius: 4px; font-size: 14px; }
+    .filter-bar button {
+      padding: 7px 14px; border: none; border-radius: 4px; background: var(--blue); color: #fff;
+      cursor: pointer; font-size: 14px;
+    }
+    .filter-bar button:hover { background: #2980b9; }
+    .meta { font-size: 13px; color: #555; margin-bottom: 8px; }
+    table { width: 100%; border-collapse: collapse; background: #fff; border-radius: 8px; overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,.08); }
+    th, td { border: 1px solid #e8e8e8; padding: 10px 8px; font-size: 13px; text-align: left; vertical-align: top; }
+    th { background: var(--blue); color: #fff; text-align: center; white-space: nowrap; }
+    td.num { text-align: right; font-variant-numeric: tabular-nums; }
+    td.center { text-align: center; }
+    .raw-cell { max-width: 420px; word-break: break-word; font-size: 12px; color: #444; line-height: 1.35; }
+    .type-badge { display: inline-block; padding: 3px 8px; border-radius: 4px; background: #e8f4fc; font-weight: 600; }
+    #pagination { margin-top: 14px; text-align: center; }
+    #pagination button {
+      margin: 0 4px; padding: 6px 11px; border: 1px solid #ccc; background: #fff; cursor: pointer; border-radius: 4px;
+    }
+    #pagination button.active { background: var(--blue); color: #fff; border-color: var(--blue); }
+    #pagination button:disabled { opacity: 0.45; cursor: not-allowed; }
+  </style>
+</head>
+<body>
+  <h1>🎁 Lịch Sử Hòm Quà</h1>
+
+  <div class="filter-bar">
+    <label for="filterGiftType">Loại quà</label>
+    <select id="filterGiftType" onchange="loadPage(1)">
+      <option value="">Tất cả</option>
+    </select>
+    <label for="searchUsername">Username</label>
+    <input id="searchUsername" type="text" placeholder="Lọc theo username (gần đúng)" style="min-width:220px;" />
+    <button type="button" onclick="loadPage(1)">Áp dụng</button>
+  </div>
+  <div class="meta" id="summary"></div>
+
+  <table>
+    <thead>
+      <tr>
+        <th>ID</th>
+        <th>Username</th>
+        <th>gift_type</th>
+        <th>Số tiền</th>
+        <th>issued_at</th>
+        <th>received_at</th>
+        <th>raw_line</th>
+      </tr>
+    </thead>
+    <tbody id="dataBody"></tbody>
+  </table>
+
+  <div id="pagination"></div>
+
+  <script>
+    const limit = 50;
+    let totalPages = 1;
+    /** Trùng nhóm phân loại trong server.js (classifyGiftTitle) — luôn hiện trong dropdown */
+    const KNOWN_GIFT_TYPES = ['Tóp', 'Chuỗi', 'Hoàn thua ngày LC79', 'Lộc may mắn LC79', 'Hoàn cược ngày', 'Khác'];
+
+    function giftTypesForSelect(serverTypes, rows) {
+      const set = new Set(KNOWN_GIFT_TYPES);
+      (serverTypes || []).forEach(t => { if (t) set.add(t); });
+      (rows || []).forEach(r => { if (r && r.gift_type) set.add(r.gift_type); });
+      return Array.from(set).sort((a, b) => a.localeCompare(b, 'vi'));
+    }
+
+    function applyGiftTypeSelect(types) {
+      const sel = document.getElementById('filterGiftType');
+      const keep = sel.value;
+      sel.innerHTML = '<option value="">Tất cả</option>';
+      types.forEach(t => {
+        const opt = document.createElement('option');
+        opt.value = t;
+        opt.textContent = t;
+        sel.appendChild(opt);
+      });
+      if (types.includes(keep)) sel.value = keep;
+    }
+
+    function loadPage(page) {
+      const gift_type = document.getElementById('filterGiftType').value.trim();
+      const username = document.getElementById('searchUsername').value.trim();
+      const params = new URLSearchParams({ page: String(page), limit: String(limit) });
+      if (gift_type) params.set('gift_type', gift_type);
+      if (username) params.set('username', username);
+
+      axios.get(`/api/gift-box-claims?${params}`)
+        .then(res => {
+          const { total, page: p, rows, gift_types } = res.data;
+          applyGiftTypeSelect(giftTypesForSelect(gift_types, rows));
+          totalPages = Math.max(1, Math.ceil(total / limit));
+          document.getElementById('summary').textContent =
+            `Tổng ${total.toLocaleString()} bản ghi — trang ${p}/${totalPages} (mỗi trang ${limit})`;
+
+          const tbody = document.getElementById('dataBody');
+          tbody.innerHTML = '';
+          (rows || []).forEach(r => {
+            const tr = document.createElement('tr');
+            const raw = r.raw_line != null ? String(r.raw_line) : '';
+            tr.innerHTML = `
+              <td class="center">${r.id}</td>
+              <td>${escapeHtml(r.username)}</td>
+              <td class="center"><span class="type-badge">${escapeHtml(r.gift_type)}</span></td>
+              <td class="num">${Number(r.amount).toLocaleString()}</td>
+              <td class="center">${escapeHtml(r.issued_at)}</td>
+              <td class="center">${escapeHtml(r.received_at)}</td>
+              <td class="raw-cell">${escapeHtml(raw)}</td>
+            `;
+            tbody.appendChild(tr);
+          });
+
+          const pag = document.getElementById('pagination');
+          pag.innerHTML = '';
+          const addBtn = (label, targetPage, opts = {}) => {
+            const btn = document.createElement('button');
+            btn.textContent = label;
+            if (opts.active) btn.classList.add('active');
+            if (opts.disabled) btn.disabled = true;
+            else btn.onclick = () => loadPage(targetPage);
+            pag.appendChild(btn);
+          };
+          addBtn('« Trước', p - 1, { disabled: p <= 1 });
+          const windowSize = 7;
+          let start = Math.max(1, p - Math.floor(windowSize / 2));
+          let end = Math.min(totalPages, start + windowSize - 1);
+          if (end - start + 1 < windowSize) start = Math.max(1, end - windowSize + 1);
+          for (let i = start; i <= end; i++) addBtn(String(i), i, { active: i === p });
+          addBtn('Sau »', p + 1, { disabled: p >= totalPages });
+        })
+        .catch(err => console.error(err));
+    }
+
+    function escapeHtml(s) {
+      return String(s)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;');
+    }
+
+    loadPage(1);
+  </script>
+</body>
+</html>

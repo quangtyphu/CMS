@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Thống Kê Hòm Quà</title>
+  <script src="https://cdn.jsdelivr.net/npm/axios/dist/axios.min.js"></script>
+  <style>
+    :root { --blue:#3498db; --gray:#f7f8fa; --text:#2c3e50; }
+    body { font-family: Arial, sans-serif; background: var(--gray); margin: 0; padding: 20px; color: var(--text); }
+    h1 { margin: 0 0 14px; font-size: 1.35rem; }
+    .toolbar { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; margin-bottom: 12px; }
+    .toolbar label { font-weight: 600; }
+    .toolbar input { padding: 7px 10px; border: 1px solid #ccc; border-radius: 4px; font-size: 14px; width: 64px; }
+    .toolbar button {
+      padding: 7px 14px; border: none; border-radius: 4px; background: var(--blue); color: #fff;
+      cursor: pointer; font-size: 14px;
+    }
+    .toolbar button:hover { background: #2980b9; }
+    .meta { font-size: 13px; color: #555; margin-bottom: 10px; line-height: 1.4; }
+    table { width: 100%; border-collapse: collapse; background: #fff; border-radius: 8px; overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,.08); }
+    th, td { border: 1px solid #e8e8e8; padding: 10px 8px; font-size: 13px; text-align: center; }
+    th { background: var(--blue); color: #fff; white-space: nowrap; }
+    td.num { font-variant-numeric: tabular-nums; }
+    td.ab { white-space: nowrap; font-size: 12px; }
+    tr:nth-child(even) { background: #fafafa; }
+  </style>
+</head>
+<body>
+  <h1>📊 Thống Kê Hòm Quà</h1>
+
+  <div class="toolbar">
+    <label for="daysInput">Số ngày</label>
+    <input id="daysInput" type="number" min="1" max="90" value="20" />
+    <button type="button" onclick="loadStats()">Xem</button>
+  </div>
+  <div class="meta" id="meta"></div>
+
+  <table>
+    <thead>
+      <tr id="headRow">
+        <th>Ngày (lịch)</th>
+        <th>Tổng tiền A / B (đ)</th>
+      </tr>
+    </thead>
+    <tbody id="body"></tbody>
+  </table>
+
+  <script>
+    let statColumns = [];
+
+    function fmtAB(na, nb) {
+      const a = Number(na) || 0;
+      const b = Number(nb) || 0;
+      return `${a.toLocaleString()} / ${b.toLocaleString()}`;
+    }
+
+    function buildHeader() {
+      const tr = document.getElementById('headRow');
+      tr.innerHTML = '<th>Ngày (lịch)</th><th>Tổng tiền A / B (đ)</th>';
+      statColumns.forEach(c => {
+        const th = document.createElement('th');
+        th.textContent = `${c.label} A / B (đ)`;
+        tr.appendChild(th);
+      });
+    }
+
+    function loadStats() {
+      const days = Math.min(90, Math.max(1, parseInt(document.getElementById('daysInput').value, 10) || 20));
+      document.getElementById('daysInput').value = days;
+
+      axios.get(`/api/gift-box-claims/stats/daily?days=${days}`)
+        .then(res => {
+          const { range, columns, rows, ab } = res.data;
+          statColumns = columns || [];
+          buildHeader();
+
+          const aLabel = ab && ab.a ? ab.a : 'issued_at';
+          const bLabel = ab && ab.b ? ab.b : 'received_at';
+          document.getElementById('meta').innerHTML =
+            `Mỗi dòng là một <strong>ngày lịch</strong> (Asia/Ho_Chi_Minh). ` +
+            `Khoảng: <strong>${range.start}</strong> → <strong>${range.end}</strong>. ` +
+            `Trong mỗi ô: <strong>A</strong> = tổng <code>amount</code> các hòm có <strong>${aLabel}</strong> rơi vào ngày đó; ` +
+            `<strong>B</strong> = tổng tiền các hòm có <strong>${bLabel}</strong> rơi vào ngày đó. ` +
+            `Định dạng <code>A / B</code> (đ).`;
+
+          const tbody = document.getElementById('body');
+          tbody.innerHTML = '';
+          (rows || []).forEach(r => {
+            const tr = document.createElement('tr');
+            const a = r.a || {};
+            const b = r.b || {};
+            const cells = [
+              `<td>${r.date}</td>`,
+              `<td class="num ab">${fmtAB(a.total, b.total)}</td>`,
+            ];
+            statColumns.forEach(c => {
+              cells.push(`<td class="num ab">${fmtAB(a[c.key], b[c.key])}</td>`);
+            });
+            tr.innerHTML = cells.join('');
+            tbody.appendChild(tr);
+          });
+        })
+        .catch(err => console.error(err));
+    }
+
+    loadStats();
+  </script>
+</body>
+</html>

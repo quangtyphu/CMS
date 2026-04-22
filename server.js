@@ -7,6 +7,7 @@ const cors = require('cors');
 const sqlite3 = require('sqlite3').verbose();
 const dayjs = require('dayjs');
 const fs = require('fs');
+const path = require('path');
 const utc = require('dayjs/plugin/utc');
 const timezone = require('dayjs/plugin/timezone');
 
@@ -21,6 +22,71 @@ const PORT = 3000;
 const fetch = (...args) => import('node-fetch').then(({ default: fetch }) => fetch(...args));
 app.use(cors());
 app.use(bodyParser.json());
+app.use(express.text({ type: 'text/plain' }));
+
+// ------------------- Config files -------------------
+const LC79_CONFIG_PATH = process.env.LC79_CONFIG_PATH
+  || path.resolve(__dirname, '../LC79/config.json');
+const BANKING_DEVICES_PATH = process.env.BANKING_DEVICES_PATH
+  || path.resolve(__dirname, '../Banking/devices.json');
+
+app.get('/api/config', (req, res) => {
+  try {
+    const raw = fs.readFileSync(LC79_CONFIG_PATH, 'utf8');
+    if (String(req.query.raw) === '1') {
+      res.type('text/plain').send(raw);
+      return;
+    }
+    const data = JSON.parse(raw);
+    res.json({ ok: true, path: LC79_CONFIG_PATH, data });
+  } catch (err) {
+    res.status(500).json({ ok: false, error: `Không đọc được config: ${err.message}` });
+  }
+});
+
+app.put('/api/config', (req, res) => {
+  try {
+    if (typeof req.body === 'string') {
+      fs.writeFileSync(LC79_CONFIG_PATH, req.body, 'utf8');
+    } else {
+      const data = req.body || {};
+      const json = JSON.stringify(data, null, 2);
+      fs.writeFileSync(LC79_CONFIG_PATH, json, 'utf8');
+    }
+    res.json({ ok: true, path: LC79_CONFIG_PATH });
+  } catch (err) {
+    res.status(500).json({ ok: false, error: `Không lưu được config: ${err.message}` });
+  }
+});
+
+app.get('/api/banking-devices', (req, res) => {
+  try {
+    const raw = fs.readFileSync(BANKING_DEVICES_PATH, 'utf8');
+    if (String(req.query.raw) === '1') {
+      res.type('text/plain').send(raw);
+      return;
+    }
+    const data = JSON.parse(raw);
+    res.json({ ok: true, path: BANKING_DEVICES_PATH, data });
+  } catch (err) {
+    res.status(500).json({ ok: false, error: `Không đọc được devices.json: ${err.message}` });
+  }
+});
+
+app.put('/api/banking-devices', (req, res) => {
+  try {
+    if (typeof req.body === 'string') {
+      fs.writeFileSync(BANKING_DEVICES_PATH, req.body, 'utf8');
+    } else {
+      const data = req.body || {};
+      const json = JSON.stringify(data, null, 2);
+      fs.writeFileSync(BANKING_DEVICES_PATH, json, 'utf8');
+    }
+    res.json({ ok: true, path: BANKING_DEVICES_PATH });
+  } catch (err) {
+    res.status(500).json({ ok: false, error: `Không lưu được devices.json: ${err.message}` });
+  }
+});
 
 // ------------------- Kết nối SQLite -------------------
 const db = new sqlite3.Database('./game_data.db', (err) => {
@@ -222,15 +288,52 @@ db.run(`CREATE TABLE IF NOT EXISTS bet_history (
   door TEXT,
 
   -- field mới
-  status TEXT CHECK(status IN ('success','failed','won','lost','placed')) DEFAULT 'placed',
+  status TEXT CHECK(status IN ('success','failed','won','lost','placed','refund')) DEFAULT 'placed',
   balance INTEGER,     -- số dư sau bet hoặc sau kết quả
   prize INTEGER,       -- tiền thắng
   dices TEXT,          -- lưu mảng xúc xắc dạng JSON string
 
   time DATETIME DEFAULT (datetime('now'))
+)`, (err) => {
+  if (err) return;
+  // Migration: bet_history cũ có thể thiếu 'refund' → recreate bảng (chạy mỗi lần khởi động)
+  db.run(`DROP TABLE IF EXISTS _bet_history_mig`, () => {
+    db.run(`CREATE TABLE _bet_history_mig (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      game TEXT, device TEXT, username TEXT, amount INTEGER, door TEXT,
+      status TEXT CHECK(status IN ('success','failed','won','lost','placed','refund')) DEFAULT 'placed',
+      balance INTEGER, prize INTEGER, dices TEXT,
+      time DATETIME DEFAULT (datetime('now'))
+    )`, () => {
+      db.run(`INSERT INTO _bet_history_mig SELECT id, game, device, username, amount, door, status, balance, prize, dices, time FROM bet_history`, (err2) => {
+        if (err2) return;
+        db.run(`DROP TABLE bet_history`, () => {
+          db.run(`ALTER TABLE _bet_history_mig RENAME TO bet_history`, () => {
+            console.log("✅ Migration bet_history: đã thêm status 'refund'");
+          });
+        });
+      });
+    });
+  });
+});
+
+// Phiên nổ hũ Tài Xỉu — thông số chia hũ (Python: jackpot_session_db.py)
+db.run(`CREATE TABLE IF NOT EXISTS jackpot_session_records (
+  session_id INTEGER PRIMARY KEY,
+  username TEXT,
+  my_total_bet REAL NOT NULL,
+  game_total_bet REAL NOT NULL,
+  jackpot_amount REAL NOT NULL,
+  amount_received REAL NOT NULL,
+  jackpot_side TEXT,
+  session_timestamp TEXT,
+  api_username TEXT,
+  dices TEXT,
+  dice_point INTEGER,
+  overall_total_amount REAL,
+  created_at TEXT,
+  updated_at TEXT NOT NULL
 )`);
-
-
 
 db.run(`
   CREATE TABLE IF NOT EXISTS deposit_orders (
@@ -250,9 +353,296 @@ db.run(`
   else console.log("✅ Bảng deposit_orders đã sẵn sàng.");
 });
 
+db.run(`
+  CREATE TABLE IF NOT EXISTS gift_box_claims (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    username TEXT NOT NULL,
+    gift_type TEXT NOT NULL,
+    amount INTEGER NOT NULL,
+    issued_at TEXT NOT NULL,
+    received_at TEXT NOT NULL,
+    raw_line TEXT,
+    created_at TEXT DEFAULT (datetime('now'))
+  )
+`, (err) => {
+  if (err) console.error("❌ Lỗi khi tạo bảng gift_box_claims:", err.message);
+  else console.log("✅ Bảng gift_box_claims đã sẵn sàng.");
+});
+
+function classifyGiftTitle(title) {
+  const t = String(title || '').trim();
+  if (t.includes('Xin chúc mừng! Bạn đã xuất sắc xếp hạng')) return 'Tóp';
+  if (t.includes('Xin chúc mừng! Bạn đã xuất sắc đạt chuỗi')) return 'Chuỗi';
+  if (t.includes('Hoàn thua ngày LC79')) return 'Hoàn thua ngày LC79';
+  if (t.includes('Lộc may mắn LC79')) return 'Lộc may mắn LC79';
+  if (t.includes('Hoàn cược ngày')) return 'Hoàn cược ngày';
+  return 'Khác';
+}
+
+/** Thống kê theo ngày: nhãn cột UI ↔ gift_type trong DB */
+const GIFT_BOX_DAILY_STAT_COLUMNS = [
+  { key: 'hoan_cuoc_ngay', label: 'Hoàn Cược Ngày', dbValue: 'Hoàn cược ngày' },
+  { key: 'chuoi', label: 'Chuỗi', dbValue: 'Chuỗi' },
+  { key: 'top', label: 'Tóp', dbValue: 'Tóp' },
+  { key: 'loc_may_man', label: 'Lộc May Mắn', dbValue: 'Lộc may mắn LC79' },
+  { key: 'hoan_thua_ngay', label: 'Hoàn Thua Ngày', dbValue: 'Hoàn thua ngày LC79' },
+  { key: 'khac', label: 'Khác', dbValue: 'Khác' },
+];
+
+function giftTypeToDailyStatKey(giftType) {
+  const s = String(giftType || '');
+  const col = GIFT_BOX_DAILY_STAT_COLUMNS.find((c) => c.dbValue === s);
+  if (col) return col.key;
+  return 'khac';
+}
+
+function giftBoxClaimsRowsByDate(rows) {
+  const byDate = new Map();
+  for (const r of rows || []) {
+    const d = r.d;
+    if (!byDate.has(d)) byDate.set(d, []);
+    byDate.get(d).push({ gift_type: r.gift_type, sum_amount: Number(r.sum_amount) || 0 });
+  }
+  return byDate;
+}
+
+function giftBoxClaimsFoldOneDay(byDate, dStr) {
+  const list = byDate.get(dStr) || [];
+  const counts = {};
+  for (const c of GIFT_BOX_DAILY_STAT_COLUMNS) counts[c.key] = 0;
+  let total = 0;
+  for (const { gift_type: gt, sum_amount } of list) {
+    total += sum_amount;
+    const key = giftTypeToDailyStatKey(gt);
+    counts[key] = (counts[key] || 0) + sum_amount;
+  }
+  return { total, ...counts };
+}
+
+/** Parse dòng log: 🎁 [user] YYYY-MM-DD HH:mm:ss | Nhận: ... (+Xđ) → Số dư: ... */
+function parseGiftBoxLine(line) {
+  const s = String(line || '').replace(/\r\n/g, '\n').trim();
+  const headerMatch = s.match(/🎁\s*\[([^\]]+)\]\s*(\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2})/);
+  if (!headerMatch) return null;
+  const username = headerMatch[1].trim();
+  const issued_at = headerMatch[2].trim();
+  const endPhrase = ') → Số dư:';
+  const endIdx = s.lastIndexOf(endPhrase);
+  if (endIdx < 0) return null;
+  const beforeClosing = s.slice(0, endIdx);
+  const openIdx = beforeClosing.lastIndexOf('(+');
+  if (openIdx < 0) return null;
+  const nhanMark = '| Nhận:';
+  const nhanIdx = s.indexOf(nhanMark);
+  if (nhanIdx < 0) return null;
+  const titleStart = nhanIdx + nhanMark.length;
+  const title = s.slice(titleStart, openIdx).trim();
+  const amountInside = s.slice(openIdx + 2, endIdx);
+  const amount = parseInt(String(amountInside).replace(/[^\d]/g, ''), 10);
+  if (!title || Number.isNaN(amount)) return null;
+  return {
+    username,
+    issued_at,
+    title,
+    amount,
+    gift_type: classifyGiftTitle(title),
+  };
+}
+
+// ------------------- API: Hòm quà (LC79) -------------------
+app.post('/api/gift-box-claims', (req, res) => {
+  const body = req.body || {};
+  let username;
+  let gift_type;
+  let amount;
+  let issued_at;
+  let received_at = body.received_at || body.receivedAt;
+  let raw_line = body.line || body.raw_line || body.rawLine || null;
+
+  if (body.username && (body.gift_type != null || body.giftType != null) && body.amount != null && body.issued_at != null) {
+    username = String(body.username).trim();
+    gift_type = String(body.gift_type || body.giftType).trim();
+    amount = parseInt(body.amount, 10);
+    issued_at = String(body.issued_at || body.issuedAt).trim();
+  } else if (raw_line) {
+    const parsed = parseGiftBoxLine(raw_line);
+    if (!parsed) {
+      return res.status(400).json({ ok: false, error: 'Không parse được dòng hòm quà' });
+    }
+    username = parsed.username;
+    gift_type = body.gift_type || body.giftType || parsed.gift_type;
+    amount = parsed.amount;
+    issued_at = parsed.issued_at;
+  } else {
+    return res.status(400).json({ ok: false, error: 'Thiếu line hoặc bộ username/gift_type/amount/issued_at' });
+  }
+
+  if (!received_at) {
+    received_at = dayjs().tz('Asia/Ho_Chi_Minh').format('YYYY-MM-DD HH:mm:ss');
+  } else {
+    received_at = String(received_at).trim();
+  }
+
+  if (!username || !gift_type || Number.isNaN(amount)) {
+    return res.status(400).json({ ok: false, error: 'Dữ liệu không hợp lệ sau khi parse' });
+  }
+
+  const sql = `INSERT INTO gift_box_claims (username, gift_type, amount, issued_at, received_at, raw_line)
+               VALUES (?, ?, ?, ?, ?, ?)`;
+  db.run(sql, [username, gift_type, amount, issued_at, received_at, raw_line], function (err) {
+    if (err) {
+      console.error('❌ gift-box-claims:', err.message);
+      return res.status(500).json({ ok: false, error: err.message });
+    }
+    res.json({ ok: true, id: this.lastID });
+  });
+});
+
+app.get('/api/gift-box-claims/types', (req, res) => {
+  db.all(
+    `SELECT DISTINCT gift_type FROM gift_box_claims ORDER BY gift_type`,
+    (err, rows) => {
+      if (err) return res.status(500).json({ ok: false, error: err.message });
+      res.json({ ok: true, types: (rows || []).map((r) => r.gift_type) });
+    }
+  );
+});
+
+/** Thống kê hòm quà theo ngày (múi giờ VN): mỗi ô A/B = tổng tiền theo issued_at / received_at */
+app.get('/api/gift-box-claims/stats/daily', (req, res) => {
+  const days = Math.min(90, Math.max(1, parseInt(req.query.days, 10) || 20));
+
+  const end = dayjs().tz('Asia/Ho_Chi_Minh').startOf('day');
+  const start = end.subtract(days - 1, 'day');
+  const startStr = start.format('YYYY-MM-DD');
+  const endStr = end.format('YYYY-MM-DD');
+
+  const sqlIssued = `
+    SELECT date(issued_at) AS d, gift_type, COALESCE(SUM(amount), 0) AS sum_amount
+    FROM gift_box_claims
+    WHERE date(issued_at) >= date(?) AND date(issued_at) <= date(?)
+    GROUP BY d, gift_type
+  `;
+  const sqlReceived = `
+    SELECT date(received_at) AS d, gift_type, COALESCE(SUM(amount), 0) AS sum_amount
+    FROM gift_box_claims
+    WHERE date(received_at) >= date(?) AND date(received_at) <= date(?)
+    GROUP BY d, gift_type
+  `;
+
+  db.all(sqlIssued, [startStr, endStr], (err, rowsA) => {
+    if (err) return res.status(500).json({ ok: false, error: err.message });
+    db.all(sqlReceived, [startStr, endStr], (err2, rowsB) => {
+      if (err2) return res.status(500).json({ ok: false, error: err2.message });
+
+      const byIssued = giftBoxClaimsRowsByDate(rowsA);
+      const byReceived = giftBoxClaimsRowsByDate(rowsB);
+
+      const result = [];
+      for (let i = 0; i < days; i++) {
+        const day = start.add(i, 'day');
+        const dStr = day.format('YYYY-MM-DD');
+        result.push({
+          date: dStr,
+          a: giftBoxClaimsFoldOneDay(byIssued, dStr),
+          b: giftBoxClaimsFoldOneDay(byReceived, dStr),
+        });
+      }
+
+      result.reverse();
+
+      res.json({
+        ok: true,
+        days,
+        range: { start: startStr, end: endStr },
+        aggregate: 'sum_amount',
+        ab: { a: 'issued_at', b: 'received_at' },
+        columns: GIFT_BOX_DAILY_STAT_COLUMNS.map((c) => ({ key: c.key, label: c.label })),
+        rows: result,
+      });
+    });
+  });
+});
+
+app.get('/api/gift-box-claims', (req, res) => {
+  const page = Math.max(1, parseInt(req.query.page, 10) || 1);
+  const limit = Math.min(200, Math.max(1, parseInt(req.query.limit, 10) || 50));
+  const offset = (page - 1) * limit;
+  const username = req.query.username;
+  const gift_type = req.query.gift_type || req.query.giftType;
+  const conditions = [];
+  const params = [];
+  if (username) {
+    conditions.push('username LIKE ?');
+    params.push(`%${username}%`);
+  }
+  if (gift_type) {
+    conditions.push('gift_type = ?');
+    params.push(gift_type);
+  }
+  const whereClause = conditions.length ? ` WHERE ${conditions.join(' AND ')}` : '';
+  const sqlCount = `SELECT COUNT(*) as total FROM gift_box_claims${whereClause}`;
+  const sqlData = `SELECT * FROM gift_box_claims${whereClause} ORDER BY id DESC LIMIT ? OFFSET ?`;
+
+  db.get(sqlCount, params, (err, countRow) => {
+    if (err) return res.status(500).json({ ok: false, error: err.message });
+    const total = countRow?.total || 0;
+    db.all(sqlData, [...params, limit, offset], (err2, rows) => {
+      if (err2) return res.status(500).json({ ok: false, error: err2.message });
+      db.all(
+        `SELECT DISTINCT gift_type FROM gift_box_claims ORDER BY gift_type`,
+        (err3, typeRows) => {
+          if (err3) return res.status(500).json({ ok: false, error: err3.message });
+          const gift_types = (typeRows || []).map((r) => r.gift_type);
+          res.json({ ok: true, total, page, limit, rows, gift_types });
+        }
+      );
+    });
+  });
+});
+
+// ------------------- Thống kê / danh sách phiên nổ hũ (jackpot_session_records) -------------------
+app.get('/api/jackpot-sessions', (req, res) => {
+  const page = Math.max(1, parseInt(req.query.page, 10) || 1);
+  const limit = Math.min(200, Math.max(1, parseInt(req.query.limit, 10) || 50));
+  const offset = (page - 1) * limit;
+  const username = req.query.username;
+  const conditions = [];
+  const params = [];
+  if (username) {
+    conditions.push('(username LIKE ? OR api_username LIKE ?)');
+    const like = `%${username}%`;
+    params.push(like, like);
+  }
+  const whereClause = conditions.length ? ` WHERE ${conditions.join(' AND ')}` : '';
+  const sqlCount = `SELECT COUNT(*) as total FROM jackpot_session_records${whereClause}`;
+  const sqlData = `
+    SELECT session_id, my_total_bet, game_total_bet, jackpot_amount, amount_received,
+           username, api_username, session_timestamp, updated_at
+    FROM jackpot_session_records${whereClause}
+    ORDER BY session_id DESC
+    LIMIT ? OFFSET ?
+  `;
+
+  db.get(sqlCount, params, (err, countRow) => {
+    if (err) return res.status(500).json({ ok: false, error: err.message });
+    const total = countRow?.total || 0;
+    db.all(sqlData, [...params, limit, offset], (err2, rows) => {
+      if (err2) return res.status(500).json({ ok: false, error: err2.message });
+      res.json({ ok: true, total, page, limit, rows });
+    });
+  });
+});
+
 // ------------------- API: Tạo lệnh nạp tiền -------------------
 app.post('/api/deposit-orders', (req, res) => {
-  const { username, amount, accountNumber, accountHolder, bank, transferContent } = req.body;
+  const { username, amount, accountNumber, accountHolder, bank, transferContent, transfer_content } = req.body;
+  // Hỗ trợ cả camelCase và snake_case. Ưu tiên giá trị không rỗng (format BC... có dấu - từ BIDV).
+  const ndck = [transferContent, transfer_content].find(v => v != null && String(v).trim()) || '';
+  // Debug: nếu thiếu ndck nhưng có 1 trong 2 key thì log (Python gửi đủ nhưng Node nhận thiếu)
+  if (!ndck && (transferContent !== undefined || transfer_content !== undefined)) {
+    console.warn('⚠️ deposit-orders: Nhận transferContent/transfer_content nhưng ndck rỗng. Raw:', { transferContent, transfer_content, bank });
+  }
   if (!username) return res.status(400).json({ error: 'Thiếu username' });
 
   const sqlCheckPending = `
@@ -278,10 +668,13 @@ app.post('/api/deposit-orders', (req, res) => {
 
   const sql = `INSERT INTO deposit_orders (username, amount, accountNumber, accountHolder, bank, transferContent, status, createdAt, updatedAt)
                VALUES (?, ?, ?, ?, ?, ?, 'Chờ Nạp', datetime('now'), datetime('now'))`;
-  db.run(sql, [username, amount || 0, accountNumber || '', accountHolder || '', bank || '', transferContent || ''], function (err) {
+  db.run(sql, [username, amount || 0, accountNumber || '', accountHolder || '', bank || '', ndck], function (err) {
     if (err) {
       console.error("❌ Lỗi khi tạo lệnh nạp:", err.message);
       return res.status(500).json({ error: 'Không thể tạo lệnh nạp' });
+    }
+    if (ndck && (ndck.includes('-') || ndck.startsWith('BC'))) {
+      console.log('✅ Lưu deposit order #' + this.lastID + ' với NDCK: ' + ndck.substring(0, 30) + '...');
     }
     res.json({ success: true, id: this.lastID });
   });
@@ -913,6 +1306,45 @@ app.get('/api/transactions/grouped/by-user/today', (req, res) => {
   }
 });
 
+// API tổng nạp / tổng rút của 1 user trong transaction_details (toàn thời gian)
+// GET /api/transaction-totals?username=...
+// Hoặc GET /api/users/:username/transaction-totals
+function handleUserTransactionTotals(username, res) {
+  const u = String(username || '').trim();
+  if (!u) {
+    return res.status(400).json({ ok: false, error: 'username bắt buộc' });
+  }
+  const sql = `
+    SELECT
+      SUM(CASE WHEN hinhThuc = 'Nạp tiền' THEN amount ELSE 0 END) AS total_deposit,
+      SUM(CASE WHEN hinhThuc = 'Rút tiền' AND status IN ('Thành công', 'pending') THEN amount ELSE 0 END) AS total_withdraw
+    FROM transaction_details
+    WHERE username = ?
+  `;
+  db.get(sql, [u], (err, row) => {
+    if (err) {
+      console.error('❌ transaction-totals:', err.message);
+      return res.status(500).json({ ok: false, error: err.message });
+    }
+    const totalDeposit = Number(row?.total_deposit || 0);
+    const totalWithdraw = Number(row?.total_withdraw || 0);
+    res.json({
+      ok: true,
+      username: u,
+      total_deposit: totalDeposit,
+      total_withdraw: totalWithdraw,
+      net: totalDeposit - totalWithdraw
+    });
+  });
+}
+
+app.get('/api/transaction-totals', (req, res) => {
+  handleUserTransactionTotals(req.query.username, res);
+});
+
+app.get('/api/users/:username/transaction-totals', (req, res) => {
+  handleUserTransactionTotals(req.params.username, res);
+});
 
 
 // API lấy dữ liệu streak nhiều user
@@ -1020,7 +1452,11 @@ app.get('/api/accounts/out-of-money', (req, res) => {
 
 // ------------------- Lấy toàn bộ tài khoản -------------------
 app.get('/api/accounts', (req, res) => {
-  const sql = `SELECT * FROM accounts`;
+  const sql = `
+    SELECT a.*, p.nickname AS nickname
+    FROM accounts a
+    LEFT JOIN user_profiles p ON p.username = a.username
+  `;
   db.all(sql, [], (err, rows) => {
     if (err) {
       return res.status(500).json({ error: err.message });
@@ -1196,7 +1632,7 @@ app.post('/api/withdraw', async (req, res) => {
 // ...existing code...
 
 app.post('/api/accounts', (req, res) => {
-  const { game, username, loginPass, phone, withdrawPass, bank, accountNumber, accountHolder, device } = req.body;
+  const { game, username, loginPass, phone, withdrawPass, bank, accountNumber, accountHolder, device, nickname } = req.body;
   const uuid = uuidv4();
 
   // 1. Thêm Account
@@ -1221,9 +1657,9 @@ app.post('/api/accounts', (req, res) => {
       }
 
       if (!row) {
-        // 3. Nếu chưa có thì thêm UserProfile mới
-        const sqlProfile = `INSERT INTO user_profiles (username, status, device, balance) VALUES (?, ?, ?, ?)`;
-        db.run(sqlProfile, [username, "Mới Tạo", device || "", 0], function (err2) {
+        // 3. Nếu chưa có thì thêm UserProfile mới (nickname lưu ở user_profiles)
+        const sqlProfile = `INSERT INTO user_profiles (username, nickname, status, device, balance) VALUES (?, ?, ?, ?, ?)`;
+        db.run(sqlProfile, [username, nickname || null, "Mới Tạo", device || "", 0], function (err2) {
           if (err2) {
             console.error("❌ Lỗi khi thêm UserProfile:", err2.message);
             return res.status(500).json({ error: "Không thể thêm UserProfile" });
@@ -1241,17 +1677,32 @@ app.post('/api/accounts', (req, res) => {
           });
         });
       } else {
-        // Nếu đã có UserProfile rồi thì chỉ trả account thôi
-        res.json({
-          success: true,
-          account: {
-            id: accountId,
-            username,
-            game,
-            device
-          },
-          userProfileCreated: false
-        });
+        const respondExisting = () =>
+          res.json({
+            success: true,
+            account: {
+              id: accountId,
+              username,
+              game,
+              device
+            },
+            userProfileCreated: false
+          });
+        if (Object.prototype.hasOwnProperty.call(req.body, 'nickname')) {
+          db.run(
+            `UPDATE user_profiles SET nickname = ? WHERE username = ?`,
+            [nickname || null, username],
+            (err3) => {
+              if (err3) {
+                console.error("❌ Lỗi khi cập nhật nickname UserProfile:", err3.message);
+                return res.status(500).json({ error: "Không thể cập nhật nickname" });
+              }
+              respondExisting();
+            }
+          );
+        } else {
+          respondExisting();
+        }
       }
     });
   });
@@ -1532,7 +1983,12 @@ app.delete('/api/users/:username', (req, res) => {
 });
 // ------------------- Lấy 1 tài khoản theo username -------------------
 app.get('/api/accounts/:username', (req, res) => {
-  const sql = `SELECT * FROM accounts WHERE username = ?`;
+  const sql = `
+    SELECT a.*, p.nickname AS nickname
+    FROM accounts a
+    LEFT JOIN user_profiles p ON p.username = a.username
+    WHERE a.username = ?
+  `;
   db.get(sql, [req.params.username], (err, row) => {
     if (err) {
       console.error("❌ Lỗi khi lấy tài khoản:", err.message);
@@ -1547,11 +2003,13 @@ app.get('/api/accounts/:username', (req, res) => {
 app.put('/api/accounts/:username', (req, res) => {
   const username = req.params.username;
   const fields = req.body;
+  const hasNickname = Object.prototype.hasOwnProperty.call(fields, 'nickname');
+  const nicknameVal = fields.nickname;
 
-  // build SET động
   const updates = [];
   const values = [];
   for (const key in fields) {
+    if (key === 'nickname') continue;
     if (["game","loginPass","phone","withdrawPass","bank","accountNumber","accountHolder","device","totalDeposit","totalWithdraw","totalBet","currentBet","status","uuid"].includes(key)) {
       updates.push(`${key} = ?`);
       values.push(fields[key]);
@@ -1559,8 +2017,38 @@ app.put('/api/accounts/:username', (req, res) => {
   }
   values.push(username);
 
+  const respondMerged = () => {
+    db.get(
+      `
+      SELECT a.*, p.nickname AS nickname
+      FROM accounts a
+      LEFT JOIN user_profiles p ON p.username = a.username
+      WHERE a.username = ?
+    `,
+      [username],
+      (err3, row) => {
+        if (err3) {
+          return res.status(500).json({ error: "Lỗi khi lấy tài khoản sau update" });
+        }
+        res.json(row);
+      }
+    );
+  };
+
+  const syncNickname = (cb) => {
+    if (!hasNickname) return cb();
+    const v = nicknameVal == null || nicknameVal === '' ? null : nicknameVal;
+    db.run(`UPDATE user_profiles SET nickname = ? WHERE username = ?`, [v, username], (err) => {
+      if (err) console.error("❌ Lỗi khi đồng bộ nickname sang UserProfile:", err.message);
+      cb();
+    });
+  };
+
   if (updates.length === 0) {
-    return res.status(400).json({ error: "Không có trường hợp lệ để cập nhật" });
+    if (!hasNickname) {
+      return res.status(400).json({ error: "Không có trường hợp lệ để cập nhật" });
+    }
+    return syncNickname(() => respondMerged());
   }
 
   const sql = `UPDATE accounts SET ${updates.join(", ")} WHERE username = ?`;
@@ -1574,38 +2062,59 @@ app.put('/api/accounts/:username', (req, res) => {
       return res.status(404).json({ error: "Không tìm thấy tài khoản" });
     }
 
-    // 🔁 Nếu có status -> đồng bộ sang UserProfile
+    const afterStatus = () => {
+      syncNickname(() => respondMerged());
+    };
+
     if (typeof fields.status !== "undefined") {
       const sqlUser = `UPDATE user_profiles SET status = ? WHERE username = ?`;
       db.run(sqlUser, [fields.status, username], (err2) => {
         if (err2) {
           console.error("❌ Lỗi khi đồng bộ status sang UserProfile:", err2.message);
         }
+        afterStatus();
       });
+    } else {
+      afterStatus();
     }
-
-    // Lấy lại record sau khi update
-    db.get(`SELECT * FROM accounts WHERE username = ?`, [username], (err3, row) => {
-      if (err3) {
-        return res.status(500).json({ error: "Lỗi khi lấy tài khoản sau update" });
-      }
-      res.json(row);
-    });
   });
 });
 
 // ------------------- Xóa tài khoản theo username -------------------
 app.delete('/api/accounts/:username', (req, res) => {
-  const sql = `DELETE FROM accounts WHERE username = ?`;
-  db.run(sql, [req.params.username], function (err) {
-    if (err) {
-      console.error("❌ Lỗi khi xoá tài khoản:", err.message);
-      return res.status(500).json({ error: "Không thể xoá tài khoản" });
-    }
-    if (this.changes === 0) {
-      return res.status(404).json({ error: "Không tìm thấy tài khoản" });
-    }
-    res.json({ success: true });
+  const username = req.params.username;
+  db.serialize(() => {
+    db.run('BEGIN TRANSACTION', (tErr) => {
+      if (tErr) {
+        console.error("❌ BEGIN TRANSACTION:", tErr.message);
+        return res.status(500).json({ error: "Không thể xoá tài khoản" });
+      }
+      db.run(`DELETE FROM accounts WHERE username = ?`, [username], function (err) {
+        if (err) {
+          console.error("❌ Lỗi khi xoá tài khoản:", err.message);
+          db.run('ROLLBACK');
+          return res.status(500).json({ error: "Không thể xoá tài khoản" });
+        }
+        if (this.changes === 0) {
+          db.run('ROLLBACK');
+          return res.status(404).json({ error: "Không tìm thấy tài khoản" });
+        }
+        db.run(`DELETE FROM user_profiles WHERE username = ?`, [username], function (err2) {
+          if (err2) {
+            console.error("❌ Lỗi khi xoá user_profiles:", err2.message);
+            db.run('ROLLBACK');
+            return res.status(500).json({ error: "Không thể xoá hồ sơ user (nickname) đi kèm" });
+          }
+          db.run('COMMIT', (cErr) => {
+            if (cErr) {
+              console.error("❌ COMMIT:", cErr.message);
+              return res.status(500).json({ error: cErr.message });
+            }
+            res.json({ success: true });
+          });
+        });
+      });
+    });
   });
 });
 // ------------------- Gán thiết bị cho tài khoản -------------------
@@ -2024,6 +2533,34 @@ app.get('/api/transactions/all', (req, res) => {
         data: result
       });
     });
+  });
+});
+
+// ------------------- Lấy danh sách user đang chờ rút tiền -------------------
+app.get('/api/withdrawals/pending-users', (req, res) => {
+  const sql = `
+    SELECT 
+      username,
+      COUNT(*) as pendingCount,
+      SUM(amount) as pendingAmount,
+      MAX(db_time) as lastDbTime,
+      MAX(time) as lastTime
+    FROM transaction_details
+    WHERE hinhThuc = 'Rút tiền'
+      AND status IN ('pending', 'Chờ xử lý', 'Đang xử lý')
+    GROUP BY username
+    ORDER BY lastDbTime DESC, lastTime DESC
+  `;
+
+  db.all(sql, [], (err, rows) => {
+    if (err) {
+      console.error("❌ Lỗi khi lấy danh sách chờ rút:", err.message);
+      return res.status(500).json({ error: "Lỗi server" });
+    }
+
+    const result = (rows || []).map(r => r.username);
+
+    res.json(result);
   });
 });
 // Cập nhật Proxy
@@ -2637,6 +3174,16 @@ app.put('/api/device-balances/:device', (req, res) => {
 
   db.serialize(async () => {
     try {
+      const existing = await get(`SELECT * FROM device_balances WHERE device = ?`, [oldDevice]);
+      const bodyRaw = req.body || {};
+      const hasKey = (k) => Object.prototype.hasOwnProperty.call(bodyRaw, k);
+      const eb = existing || {};
+      const finalBalance = hasKey('balance') ? (Number(balance) || 0) : Number(eb.balance ?? 0);
+      const finalBank = hasKey('bank') ? String(bank ?? "") : String(eb.bank ?? "");
+      const finalUsername = hasKey('username') ? String(username ?? "") : String(eb.username ?? "");
+      const finalAccNum = hasKey('accountNumber') ? String(accountNumber ?? "") : String(eb.accountNumber ?? "");
+      const finalHolder = hasKey('accountHolder') ? String(accountHolder ?? "") : String(eb.accountHolder ?? "");
+
       // 1) Nếu đổi tên -> kiểm tra trùng trước (device UNIQUE)
       if (targetDevice !== oldDevice) {
         const dup = await get(`SELECT id FROM device_balances WHERE device = ?`, [targetDevice]);
@@ -2665,16 +3212,58 @@ app.put('/api/device-balances/:device', (req, res) => {
       `;
       const rMain = await run(sqlUpdateMain, [
         targetDevice,
-        balance || 0,
-        bank || "",
-        username || "",
-        accountNumber || "",
-        accountHolder || "",
+        finalBalance,
+        finalBank,
+        finalUsername,
+        finalAccNum,
+        finalHolder,
         oldDevice
       ]);
       if (rMain.changes === 0) {
+        // Đổi tên mà không có bản ghi cũ → không tạo nhầm
+        if (targetDevice !== oldDevice) {
+          await run(`ROLLBACK`);
+          return res.status(404).json({ error: "Device không tồn tại" });
+        }
+        // App Banking: PUT balance lần đầu — tự tạo device (không cần POST / thêm tay trong DB)
         await run(`ROLLBACK`);
-        return res.status(404).json({ error: "Device không tồn tại" });
+        await run(`BEGIN IMMEDIATE`);
+        const sqlInsert = `
+          INSERT INTO device_balances (device, balance, bank, username, accountNumber, accountHolder, updatedAt)
+          VALUES (?, ?, ?, ?, ?, ?, datetime('now'))
+        `;
+        try {
+          await run(sqlInsert, [
+            oldDevice,
+            finalBalance,
+            finalBank,
+            finalUsername,
+            finalAccNum,
+            finalHolder
+          ]);
+        } catch (insErr) {
+          if (String(insErr.message || "").includes("UNIQUE")) {
+            await run(`ROLLBACK`);
+            await run(`BEGIN IMMEDIATE`);
+            await run(sqlUpdateMain, [
+              targetDevice,
+              finalBalance,
+              finalBank,
+              finalUsername,
+              finalAccNum,
+              finalHolder,
+              oldDevice
+            ]);
+            await run(`COMMIT`);
+            const rowRace = await get(`SELECT * FROM device_balances WHERE device = ?`, [targetDevice]);
+            return res.json(rowRace);
+          }
+          throw insErr;
+        }
+        await run(`COMMIT`);
+        const rowNew = await get(`SELECT * FROM device_balances WHERE device = ?`, [oldDevice]);
+        console.log(`✅ device_balances: tạo mới device '${oldDevice}' qua PUT (lần đầu, balance=${finalBalance})`);
+        return res.status(201).json(rowNew);
       }
 
       // 4) Nếu có đổi tên -> đồng bộ các bảng liên quan
@@ -3022,44 +3611,6 @@ app.put('/api/transaction-details/:transactionId', (req, res) => {
 });
 });
 
-// ------------------- Cập nhật status cho transaction -------------------
-app.put('/api/transactions/:transactionId/status', (req, res) => {
-  const { transactionId } = req.params;
-  const { status } = req.body;
-
-  if (!status) {
-    return res.status(400).json({ error: "Thiếu status" });
-  }
-
-  db.get(
-    `SELECT username, hinhThuc, status, amount FROM transaction_details WHERE transactionId = ?`,
-    [transactionId],
-    (err, existing) => {
-      if (err) {
-        console.error("❌ Lỗi khi lấy transaction_details:", err.message);
-        return res.status(500).json({ error: "Không thể cập nhật status", detail: err.message });
-      }
-      if (!existing) {
-        return res.status(404).json({ error: "Transaction không tồn tại" });
-      }
-
-      const sql = `UPDATE transaction_details SET status = ?, db_time = datetime('now','localtime') WHERE transactionId = ?`;
-      db.run(sql, [status, transactionId], function (err2) {
-        if (err2) {
-          console.error("❌ Lỗi khi cập nhật status:", err2.message);
-          return res.status(500).json({ error: "Không thể cập nhật status", detail: err2.message });
-        }
-
-        if (existing.hinhThuc === "Rút tiền" && existing.status !== "Thành công" && status === "Thành công") {
-          creditDeviceBalance(existing.username, existing.amount);
-        }
-
-        res.json({ success: true, updated: this.changes });
-      });
-    }
-  );
-});
-
 // ------------------- Cập nhật device cho transaction -------------------
 app.put('/api/transactions/:transactionId/device', (req, res) => {
   const { transactionId } = req.params;
@@ -3292,8 +3843,6 @@ app.listen(PORT, (err) => {
   if (err) return console.error("❌ Lỗi khi khởi động server:", err);
   console.log(`Server  1 running on http://0.0.0.0:${PORT}`);
 });
-
-const path = require('path');
 
 // Phục vụ giao diện CMS trong thư mục public
 app.use(express.static(path.join(__dirname, 'public')));
