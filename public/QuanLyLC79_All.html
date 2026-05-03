@@ -18,6 +18,8 @@
     .editable-device{border-bottom:1px dashed var(--blue); color:var(--blue); cursor:pointer; display:inline-block; min-width:60px;}
     .editable-input{width:120px; text-align:center;}
     .status-select.playing{background:var(--green); color:#fff; font-weight:bold;}
+    .status-select.proxy-error{background:#e67e22; color:#fff; font-weight:bold;}
+    .status-select.proxy-error:hover{background:#d35400;}
     .status-select.done{background:var(--red); color:#fff; font-weight:bold;}
     .right{text-align:right;}
     .nowrap{white-space:nowrap;}
@@ -163,6 +165,11 @@ function refreshData() {
   });
 }
 const fmt = n => (Number(n||0)).toLocaleString('vi-VN');
+const escapeHtml = (s) => String(s == null ? '' : s)
+  .replace(/&/g, '&amp;')
+  .replace(/</g, '&lt;')
+  .replace(/>/g, '&gt;')
+  .replace(/"/g, '&quot;');
 // API Python chạy port 8080 trên cùng máy: dùng hostname hiện tại để truy cập từ internet
 const api8080Base = `${window.location.protocol}//${window.location.hostname}:8080`;
 
@@ -172,6 +179,7 @@ let currentSortBy = 'default'; // Biến lưu loại sắp xếp hiện tại
 let historyData = [];
 let userMap = {};
 let totalsByUser = {}; // { username: { deposit, withdraw } }
+const normalizeUsername = (v) => String(v == null ? '' : v).trim();
 
 // Hàm xử lý thay đổi kiểu sắp xếp
 function handleSortChange() {
@@ -200,7 +208,9 @@ async function loadProfiles() {
     const arr = await res.json();
     profileMap = {};
     arr.forEach(p=>{
-      profileMap[p.username] = { nickname: p.nickname || '', balance: Number(p.balance||0) };
+      const uname = normalizeUsername(p.username);
+      if (!uname) return;
+      profileMap[uname] = { nickname: p.nickname || '', balance: Number(p.balance||0) };
     });
   } catch (e) {
     console.error('Lỗi load profiles:', e);
@@ -249,8 +259,10 @@ async function loadAccountsWithStats() {
     const betRows = Array.isArray(betResp.data) ? betResp.data : (Array.isArray(betResp) ? betResp : []);
     const betMap = {};
     (betRows || []).forEach(s => {
+      const uname = normalizeUsername(s.username);
+      if (!uname) return;
       // bet_totals dùng các cột: username, total_day, total_week, total_month, total_all
-      betMap[s.username] = {
+      betMap[uname] = {
         totalDay: Number(s.total_day || s.totalDay || 0),
         totalWeek: Number(s.total_week || s.totalWeek || 0),
         totalMonth: Number(s.total_month || s.totalMonth || 0),
@@ -260,7 +272,9 @@ async function loadAccountsWithStats() {
 
     userMap = {};
     users.forEach(u => {
-      userMap[u.username] = {
+      const uname = normalizeUsername(u.username);
+      if (!uname) return;
+      userMap[uname] = {
         status: u.status || "OFF Ngày",
         proxy: u.proxy || "",
         accessToken: u.accessToken || "",
@@ -302,20 +316,22 @@ async function loadAccountsWithStats() {
 
     // Gắn số liệu vào accounts
     (accounts || []).forEach(acc => {
-      acc.status = userMap[acc.username]?.status || "OFF Ngày";
-      acc.proxy = userMap[acc.username]?.proxy || "";
-      acc.accessToken = userMap[acc.username]?.accessToken || "";
-      acc.totalBetDay = betMap[acc.username]?.totalDay || 0;
-      acc.totalBetWeek = betMap[acc.username]?.totalWeek || 0;
-      acc.totalBetMonth = betMap[acc.username]?.totalMonth || 0;
-      acc.totalBetAll = betMap[acc.username]?.total_all || betMap[acc.username]?.totalAll || 0;
-      acc.todayDeposit = todayDepositMap[acc.username] || 0;
-      acc.todayWithdraw = todayWithdrawMap[acc.username] || 0;
-      acc.balance = Number(profileMap[acc.username]?.balance || 0); // đồng bộ số dư để sắp xếp đúng
+      const uname = normalizeUsername(acc.username);
+      acc.username = uname;
+      acc.status = userMap[uname]?.status || "OFF Ngày";
+      acc.proxy = userMap[uname]?.proxy || "";
+      acc.accessToken = userMap[uname]?.accessToken || "";
+      acc.totalBetDay = betMap[uname]?.totalDay || 0;
+      acc.totalBetWeek = betMap[uname]?.totalWeek || 0;
+      acc.totalBetMonth = betMap[uname]?.totalMonth || 0;
+      acc.totalBetAll = betMap[uname]?.total_all || betMap[uname]?.totalAll || 0;
+      acc.todayDeposit = todayDepositMap[uname] || 0;
+      acc.todayWithdraw = todayWithdrawMap[uname] || 0;
+      acc.balance = Number(profileMap[uname]?.balance || 0); // đồng bộ số dư để sắp xếp đúng
 
       // ✅ Tổng nạp/rút theo API GROUP BY (KHÔNG còn phụ thuộc 100 bản ghi)
-      acc.totalDeposit = totalsByUser[acc.username]?.deposit || 0;
-      acc.totalWithdraw = totalsByUser[acc.username]?.withdraw || 0;
+      acc.totalDeposit = totalsByUser[uname]?.deposit || 0;
+      acc.totalWithdraw = totalsByUser[uname]?.withdraw || 0;
     });
 
     renderTable(accounts || []);
@@ -604,7 +620,8 @@ function statusSelect(username, status) {
   const cls = [
     'status-select',
     (s === 'Đang Chơi' ? 'playing' : ''),
-    (['Hết Tiền', 'Proxy Lỗi', 'Token Lỗi'].includes(s) ? 'done' : '')
+    (s === 'Proxy Lỗi' ? 'proxy-error' : ''),
+    (['Hết Tiền', 'Token Lỗi'].includes(s) ? 'done' : '')
   ].join(' ');
   return `
     <select class="${cls}" data-username="${username}" onchange="updateStatus('${username}', this.value)">
@@ -626,10 +643,12 @@ function renderTable(rows) {
   // Sắp xếp theo loại được chọn
   const statusPriority = {
     'Đang Chơi': 1,
-    'Hết Tiền': 2,
-    'Đủ Ngày': 3,
-    'Đủ Tuần': 4,
-    'Đủ Tháng': 5
+    'Proxy Lỗi': 2,
+    'Hết Tiền': 3,
+    'Token Lỗi': 4,
+    'Đủ Ngày': 5,
+    'Đủ Tuần': 6,
+    'Đủ Tháng': 7
   };
 
   filtered = filtered.sort((a, b) => {
@@ -692,13 +711,13 @@ function renderTable(rows) {
   const pageItems = filtered.slice(start, end);
 
   pageItems.forEach((r, idx) => {
-    const uname = r.username;
+    const uname = normalizeUsername(r.username);
     const p = profileMap[uname] || {};
     tbody.insertAdjacentHTML('beforeend', `
       <tr style="background:${getRowColor(r.status)}">
         <td>${(start + idx + 1)}</td>
-        <td class="nowrap">${uname}</td>
-        <td>${p.nickname || ''}</td>
+        <td class="nowrap">${escapeHtml(uname || '---')}</td>
+        <td>${escapeHtml(p.nickname || uname || '')}</td>
         <td class="right">${fmt(p.balance)}</td>
         <td class="right">${fmt(r.totalBetDay || 0)}</td>
         <td class="right">${fmt(r.totalBetWeek || 0)}</td>
@@ -822,7 +841,7 @@ function getRowColor(status) {
   switch (status) {
     case 'Hết Tiền': return '#ffb3b3';     // đỏ nhạt
     case 'Đang Chơi': return '#b3ffcc';    // xanh nhạt
-    case 'Proxy Lỗi':
+    case 'Proxy Lỗi': return '#ffe0b3';     // cam nhạt — tách khỏi Đang Chơi
     case 'Token Lỗi': return '#ff6666';    // 🔴 đỏ đậm
     case 'Đủ Ngày':   return '#e6ccff';      // 💜 tím nhạt
     case 'Đủ Tháng':  return '#8a0303';    // 🩸 đỏ máu

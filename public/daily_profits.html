@@ -184,6 +184,7 @@
 
   <script>
     const fmt = n => (Number(n || 0)).toLocaleString('vi-VN');
+    const halfProfit = n => Math.trunc(Number(n || 0) / 2);
 
     async function loadData() {
       const loading = document.getElementById('loading');
@@ -244,7 +245,7 @@
       const sortedAsc = [...profits].sort((a, b) => a.date.localeCompare(b.date));
 
       sortedProfits.forEach((p, idx) => {
-        const profit = Number(p.profit || 0);
+        const profit = halfProfit(p.profit);
         const profitClass = profit >= 0 ? 'profit-positive' : 'profit-negative';
         const profitSign = profit >= 0 ? '+' : '';
 
@@ -252,7 +253,7 @@
         const ascIdx = sortedAsc.findIndex(item => item.date === p.date);
         let dailyProfit = profit;
         if (ascIdx > 0) {
-          const prevProfit = Number(sortedAsc[ascIdx - 1].profit || 0);
+          const prevProfit = halfProfit(sortedAsc[ascIdx - 1].profit);
           dailyProfit = profit - prevProfit;
         }
 
@@ -295,12 +296,12 @@
         // Lợi Nhuận Ngày: chênh lệch giữa ngày hôm nay và ngày hôm qua
         const todayIdx = sortedAsc.findIndex(item => item.date === latest.date);
         if (todayIdx > 0) {
-          const prevProfit = Number(sortedAsc[todayIdx - 1].profit || 0);
-          const todayProfitTíchLũy = Number(latest.profit || 0);
+          const prevProfit = halfProfit(sortedAsc[todayIdx - 1].profit);
+          const todayProfitTíchLũy = halfProfit(latest.profit);
           todayProfit = todayProfitTíchLũy - prevProfit;
         } else {
           // Nếu là ngày đầu tiên, lợi nhuận ngày = lợi nhuận tích lũy
-          todayProfit = Number(latest.profit || 0);
+          todayProfit = halfProfit(latest.profit);
         }
         
         // Tổng Cược Ngày: từ record mới nhất

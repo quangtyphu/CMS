@@ -7,8 +7,8 @@
   <script src="https://cdn.jsdelivr.net/npm/axios/dist/axios.min.js"></script>
   <style>
     :root { --blue:#3498db; --gray:#f7f8fa; --text:#2c3e50; }
-    body { font-family: Arial, sans-serif; background: var(--gray); margin: 0; padding: 20px; color: var(--text); }
-    h1 { margin: 0 0 14px; font-size: 1.35rem; }
+    body { font-family: Arial, sans-serif; background: var(--gray); margin: 0; padding: 20px; color: var(--text); font-size: 15px; }
+    h1 { margin: 0 0 14px; font-size: 1.5rem; }
     .toolbar { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; margin-bottom: 12px; }
     .toolbar label { font-weight: 600; }
     .toolbar input { padding: 7px 10px; border: 1px solid #ccc; border-radius: 4px; font-size: 14px; width: 64px; }
@@ -17,12 +17,12 @@
       cursor: pointer; font-size: 14px;
     }
     .toolbar button:hover { background: #2980b9; }
-    .meta { font-size: 13px; color: #555; margin-bottom: 10px; line-height: 1.4; }
+    .meta { font-size: 14px; color: #555; margin-bottom: 10px; line-height: 1.45; }
     table { width: 100%; border-collapse: collapse; background: #fff; border-radius: 8px; overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,.08); }
-    th, td { border: 1px solid #e8e8e8; padding: 10px 8px; font-size: 13px; text-align: center; }
+    th, td { border: 1px solid #e8e8e8; padding: 11px 9px; font-size: 15px; text-align: center; }
     th { background: var(--blue); color: #fff; white-space: nowrap; }
     td.num { font-variant-numeric: tabular-nums; }
-    td.ab { white-space: nowrap; font-size: 12px; }
+    td.ab { white-space: nowrap; font-size: 14px; }
     tr:nth-child(even) { background: #fafafa; }
   </style>
 </head>
@@ -40,7 +40,7 @@
     <thead>
       <tr id="headRow">
         <th>Ngày (lịch)</th>
-        <th>Tổng tiền A / B (đ)</th>
+        <th>Tổng tiền</th>
       </tr>
     </thead>
     <tbody id="body"></tbody>
@@ -57,10 +57,10 @@
 
     function buildHeader() {
       const tr = document.getElementById('headRow');
-      tr.innerHTML = '<th>Ngày (lịch)</th><th>Tổng tiền A / B (đ)</th>';
+      tr.innerHTML = '<th>Ngày (lịch)</th><th>Tổng tiền</th>';
       statColumns.forEach(c => {
         const th = document.createElement('th');
-        th.textContent = `${c.label} A / B (đ)`;
+        th.textContent = c.label;
         tr.appendChild(th);
       });
     }

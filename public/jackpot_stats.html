@@ -23,6 +23,7 @@
     th { background: var(--blue); color: #fff; text-align: center; white-space: nowrap; }
     td.num { text-align: right; font-variant-numeric: tabular-nums; }
     td.center { text-align: center; }
+    td.time { text-align: center; white-space: nowrap; font-variant-numeric: tabular-nums; font-size: 12px; }
     tr:nth-child(even) { background: #fafafa; }
     .sub { font-size: 11px; color: #666; font-weight: normal; }
     #pagination { margin-top: 14px; text-align: center; }
@@ -31,6 +32,8 @@
     }
     #pagination button.active { background: var(--blue); color: #fff; border-color: var(--blue); }
     #pagination button:disabled { opacity: 0.45; cursor: not-allowed; }
+    .daily-wrap { margin-top: 18px; }
+    .daily-wrap h2 { margin: 0 0 10px; font-size: 1.1rem; }
   </style>
 </head>
 <body>
@@ -39,6 +42,8 @@
   <div class="filter-bar">
     <label for="searchUsername">Username</label>
     <input id="searchUsername" type="text" placeholder="Lọc theo username / api_username (gần đúng)" />
+    <label for="filterDate">Ngày</label>
+    <input id="filterDate" type="date" />
     <button type="button" onclick="loadPage(1)">Áp dụng</button>
   </div>
   <div class="meta" id="summary"></div>
@@ -47,6 +52,7 @@
     <thead>
       <tr>
         <th>ID Phiên</th>
+        <th>Thời gian<br><span class="sub">session_timestamp → updated_at</span></th>
         <th>Tổng Cược<br><span class="sub">my_total_bet</span></th>
         <th>Tổng cược Game<br><span class="sub">game_total_bet</span></th>
         <th>Số Tiền nổ hũ<br><span class="sub">jackpot_amount</span></th>
@@ -57,6 +63,29 @@
   </table>
 
   <div id="pagination"></div>
+
+  <div class="daily-wrap">
+    <h2>📅 Thống Kê Nổ Hũ Theo Ngày</h2>
+    <div class="filter-bar" style="margin-top:8px;">
+      <label for="dailyDays">Số ngày gần nhất</label>
+      <input id="dailyDays" type="number" min="1" max="90" value="10" style="min-width:90px; width:90px;" />
+      <button type="button" onclick="loadDailyStats()">Xem thống kê ngày</button>
+    </div>
+    <div class="meta" id="dailySummary"></div>
+    <table>
+      <thead>
+        <tr>
+          <th>Ngày</th>
+          <th>Số phiên</th>
+          <th>Tổng Cược</th>
+          <th>Tổng cược Game</th>
+          <th>Tổng nổ hũ</th>
+          <th>Tổng tiền nhận</th>
+        </tr>
+      </thead>
+      <tbody id="dailyBody"></tbody>
+    </table>
+  </div>
 
   <script>
     const limit = 50;
@@ -70,6 +99,15 @@
         .replace(/</g, '&lt;')
         .replace(/>/g, '&gt;')
         .replace(/"/g, '&quot;');
+    }
+
+    /** Ưu tiên thời gian phiên game, sau đó lúc ghi DB */
+    function sessionDisplayTime(r) {
+      const t = (r.session_timestamp && String(r.session_timestamp).trim())
+        || (r.updated_at && String(r.updated_at).trim())
+        || (r.created_at && String(r.created_at).trim())
+        || '';
+      return t || '—';
     }
 
     function renderPagination() {
@@ -109,18 +147,40 @@
       addBtn('Sau »', currentPage + 1, { disabled: currentPage >= totalPages });
     }
 
+    function todayLocalYmd() {
+      const now = new Date();
+      const y = now.getFullYear();
+      const m = String(now.getMonth() + 1).padStart(2, '0');
+      const d = String(now.getDate()).padStart(2, '0');
+      return `${y}-${m}-${d}`;
+    }
+
     function loadPage(page) {
       currentPage = page;
       const username = document.getElementById('searchUsername').value.trim();
+      const sessionDate = document.getElementById('filterDate').value.trim();
       const params = new URLSearchParams({ page: String(page), limit: String(limit) });
       if (username) params.set('username', username);
+      if (sessionDate) params.set('session_date', sessionDate);
 
       axios.get(`/api/jackpot-sessions?${params}`)
         .then(res => {
-          const { total, page: p, rows } = res.data;
+          const data = res.data || {};
+          if (data.ok === false && data.error) {
+            document.getElementById('summary').textContent = 'Lỗi API: ' + data.error;
+            document.getElementById('dataBody').innerHTML = '';
+            document.getElementById('pagination').innerHTML = '';
+            return;
+          }
+          const total = Number(data.total) || 0;
+          const p = Number(data.page) || 1;
+          const rows = data.rows;
+          const totalAmountReceivedFiltered = Number(data.total_amount_received_filtered) || 0;
           totalPages = Math.max(1, Math.ceil(total / limit));
           document.getElementById('summary').textContent =
-            `Tổng ${total.toLocaleString()} phiên — trang ${p}/${totalPages} (mỗi trang ${limit})`;
+            total === 0
+              ? `Không có dữ liệu cho ngày đang lọc. Thử đổi ngày hoặc bỏ lọc username.`
+              : `Tổng ${total.toLocaleString()} phiên — Tổng tiền nhận (theo filter): ${totalAmountReceivedFiltered.toLocaleString()} — trang ${p}/${totalPages} (mỗi trang ${limit})`;
 
           const tbody = document.getElementById('dataBody');
           tbody.innerHTML = '';
@@ -128,6 +188,7 @@
             const tr = document.createElement('tr');
             tr.innerHTML = `
               <td class="center">${escapeHtml(r.session_id)}</td>
+              <td class="time">${escapeHtml(sessionDisplayTime(r))}</td>
               <td class="num">${Number(r.my_total_bet).toLocaleString()}</td>
               <td class="num">${Number(r.game_total_bet).toLocaleString()}</td>
               <td class="num">${Number(r.jackpot_amount).toLocaleString()}</td>
@@ -136,10 +197,62 @@
             tbody.appendChild(tr);
           });
           renderPagination();
+          loadDailyStats();
         })
-        .catch(err => console.error(err));
+        .catch(err => {
+          console.error(err);
+          const msg = err.response?.data?.error || err.message || String(err);
+          document.getElementById('summary').textContent =
+            'Không tải được dữ liệu (API /api/jackpot-sessions). Khởi động lại server sau khi cập nhật code, hoặc xem console. Chi tiết: ' + msg;
+          document.getElementById('dataBody').innerHTML = '';
+          document.getElementById('pagination').innerHTML = '';
+          document.getElementById('dailyBody').innerHTML = '';
+          document.getElementById('dailySummary').textContent = '';
+        });
     }
 
+    function loadDailyStats() {
+      const username = document.getElementById('searchUsername').value.trim();
+      const daysInput = document.getElementById('dailyDays');
+      const days = Math.min(90, Math.max(1, parseInt(daysInput.value, 10) || 10));
+      daysInput.value = days;
+      const params = new URLSearchParams({ days: String(days) });
+      if (username) params.set('username', username);
+
+      axios.get(`/api/jackpot-sessions/stats/daily?${params}`)
+        .then(res => {
+          const data = res.data || {};
+          const rows = Array.isArray(data.rows) ? data.rows : [];
+          document.getElementById('dailySummary').textContent =
+            rows.length === 0
+              ? `Không có dữ liệu thống kê theo ngày trong ${days} ngày gần nhất.`
+              : `Hiển thị ${rows.length} ngày gần nhất (tối đa ${days} ngày).`;
+
+          const tbody = document.getElementById('dailyBody');
+          tbody.innerHTML = '';
+          rows.forEach(r => {
+            const tr = document.createElement('tr');
+            tr.innerHTML = `
+              <td class="center">${escapeHtml(r.date)}</td>
+              <td class="num">${Number(r.session_count).toLocaleString()}</td>
+              <td class="num">${Number(r.my_total_bet).toLocaleString()}</td>
+              <td class="num">${Number(r.game_total_bet).toLocaleString()}</td>
+              <td class="num">${Number(r.jackpot_amount).toLocaleString()}</td>
+              <td class="num">${Number(r.amount_received).toLocaleString()}</td>
+            `;
+            tbody.appendChild(tr);
+          });
+        })
+        .catch(err => {
+          console.error(err);
+          const msg = err.response?.data?.error || err.message || String(err);
+          document.getElementById('dailySummary').textContent =
+            'Không tải được thống kê nổ hũ theo ngày. Chi tiết: ' + msg;
+          document.getElementById('dailyBody').innerHTML = '';
+        });
+    }
+
+    document.getElementById('filterDate').value = todayLocalYmd();
     loadPage(1);
   </script>
 </body>

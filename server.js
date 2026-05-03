@@ -30,6 +30,26 @@ const LC79_CONFIG_PATH = process.env.LC79_CONFIG_PATH
 const BANKING_DEVICES_PATH = process.env.BANKING_DEVICES_PATH
   || path.resolve(__dirname, '../Banking/devices.json');
 
+// ------------------- Runtime queue: streak break events -------------------
+const STREAK_BREAK_THRESHOLD_DEFAULT = 8;
+const STREAK_BREAK_EVENTS_MAX = 5000;
+let streakBreakEventSeq = 0;
+const streakBreakEvents = [];
+
+function pushStreakBreakEvent(eventPayload) {
+  const event = {
+    id: ++streakBreakEventSeq,
+    created_at: dayjs().toISOString(),
+    ...eventPayload,
+  };
+  streakBreakEvents.push(event);
+  if (streakBreakEvents.length > STREAK_BREAK_EVENTS_MAX) {
+    const overflow = streakBreakEvents.length - STREAK_BREAK_EVENTS_MAX;
+    streakBreakEvents.splice(0, overflow);
+  }
+  return event;
+}
+
 app.get('/api/config', (req, res) => {
   try {
     const raw = fs.readFileSync(LC79_CONFIG_PATH, 'utf8');
@@ -278,43 +298,11 @@ db.run(`CREATE TABLE IF NOT EXISTS device_reports (
   devices TEXT,
   last_seen DATETIME
 )`);
-// BetHistory
-db.run(`CREATE TABLE IF NOT EXISTS bet_history (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  game TEXT,
-  device TEXT,
-  username TEXT,
-  amount INTEGER,
-  door TEXT,
-
-  -- field mới
-  status TEXT CHECK(status IN ('success','failed','won','lost','placed','refund')) DEFAULT 'placed',
-  balance INTEGER,     -- số dư sau bet hoặc sau kết quả
-  prize INTEGER,       -- tiền thắng
-  dices TEXT,          -- lưu mảng xúc xắc dạng JSON string
-
-  time DATETIME DEFAULT (datetime('now'))
-)`, (err) => {
-  if (err) return;
-  // Migration: bet_history cũ có thể thiếu 'refund' → recreate bảng (chạy mỗi lần khởi động)
-  db.run(`DROP TABLE IF EXISTS _bet_history_mig`, () => {
-    db.run(`CREATE TABLE _bet_history_mig (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      game TEXT, device TEXT, username TEXT, amount INTEGER, door TEXT,
-      status TEXT CHECK(status IN ('success','failed','won','lost','placed','refund')) DEFAULT 'placed',
-      balance INTEGER, prize INTEGER, dices TEXT,
-      time DATETIME DEFAULT (datetime('now'))
-    )`, () => {
-      db.run(`INSERT INTO _bet_history_mig SELECT id, game, device, username, amount, door, status, balance, prize, dices, time FROM bet_history`, (err2) => {
-        if (err2) return;
-        db.run(`DROP TABLE bet_history`, () => {
-          db.run(`ALTER TABLE _bet_history_mig RENAME TO bet_history`, () => {
-            console.log("✅ Migration bet_history: đã thêm status 'refund'");
-          });
-        });
-      });
-    });
-  });
+// bet_history đã bỏ — xoá bảng / bảng tạm migration nếu còn từ phiên bản cũ
+db.run(`DROP TABLE IF EXISTS _bet_history_mig`, () => {});
+db.run(`DROP TABLE IF EXISTS bet_history`, (err) => {
+  if (err) console.error("⚠️ Không xoá được bet_history:", err.message);
+  else console.log("✅ bet_history: đã gỡ khỏi DB (không còn dùng)");
 });
 
 // Phiên nổ hũ Tài Xỉu — thông số chia hũ (Python: jackpot_session_db.py)
@@ -371,21 +359,28 @@ db.run(`
 
 function classifyGiftTitle(title) {
   const t = String(title || '').trim();
+  if (/top\s*cược\s*ngày/i.test(t)) return 'Tóp cược ngày';
   if (t.includes('Xin chúc mừng! Bạn đã xuất sắc xếp hạng')) return 'Tóp';
   if (t.includes('Xin chúc mừng! Bạn đã xuất sắc đạt chuỗi')) return 'Chuỗi';
+  if (t.includes('Bạn đã đạt chuỗi')) return 'Chuỗi';
   if (t.includes('Hoàn thua ngày LC79')) return 'Hoàn thua ngày LC79';
   if (t.includes('Lộc may mắn LC79')) return 'Lộc may mắn LC79';
-  if (t.includes('Hoàn cược ngày')) return 'Hoàn cược ngày';
+  if (/hoàn\s*cược\s*tháng|hoan\s*cược\s*tháng/i.test(t)) return 'Hoàn cược tháng';
+  if (/hoàn\s*cược\s*tuần|hoan\s*cược\s*tuần/i.test(t)) return 'Hoàn cược tuần';
+  if (/hoàn\s*cược\s*ngày|hoan\s*cược\s*ngày/i.test(t)) return 'Hoàn cược ngày';
   return 'Khác';
 }
 
 /** Thống kê theo ngày: nhãn cột UI ↔ gift_type trong DB */
 const GIFT_BOX_DAILY_STAT_COLUMNS = [
   { key: 'hoan_cuoc_ngay', label: 'Hoàn Cược Ngày', dbValue: 'Hoàn cược ngày' },
+  { key: 'hoan_cuoc_tuan', label: 'Hoàn Cược Tuần', dbValue: 'Hoàn cược tuần' },
   { key: 'chuoi', label: 'Chuỗi', dbValue: 'Chuỗi' },
+  { key: 'top_cuoc_ngay', label: 'Tóp Cược Ngày', dbValue: 'Tóp cược ngày' },
   { key: 'top', label: 'Tóp', dbValue: 'Tóp' },
   { key: 'loc_may_man', label: 'Lộc May Mắn', dbValue: 'Lộc may mắn LC79' },
   { key: 'hoan_thua_ngay', label: 'Hoàn Thua Ngày', dbValue: 'Hoàn thua ngày LC79' },
+  { key: 'hoan_cuoc_thang', label: 'Hoàn Cược Tháng', dbValue: 'Hoàn cược tháng' },
   { key: 'khac', label: 'Khác', dbValue: 'Khác' },
 ];
 
@@ -393,6 +388,10 @@ function giftTypeToDailyStatKey(giftType) {
   const s = String(giftType || '');
   const col = GIFT_BOX_DAILY_STAT_COLUMNS.find((c) => c.dbValue === s);
   if (col) return col.key;
+  if (/top\s*cược\s*ngày/i.test(s)) return 'top_cuoc_ngay';
+  if (/hoàn\s*cược\s*tuần|hoan\s*cược\s*tuần/i.test(s)) return 'hoan_cuoc_tuan';
+  if (/hoàn\s*cược\s*ngày|hoan\s*cược\s*ngày/i.test(s)) return 'hoan_cuoc_ngay';
+  if (/hoàn\s*cược\s*tháng|hoan\s*cược\s*tháng/i.test(s)) return 'hoan_cuoc_thang';
   return 'khac';
 }
 
@@ -570,6 +569,7 @@ app.get('/api/gift-box-claims', (req, res) => {
   const offset = (page - 1) * limit;
   const username = req.query.username;
   const gift_type = req.query.gift_type || req.query.giftType;
+  const received_date = req.query.received_date || req.query.receivedDate;
   const conditions = [];
   const params = [];
   if (username) {
@@ -580,33 +580,48 @@ app.get('/api/gift-box-claims', (req, res) => {
     conditions.push('gift_type = ?');
     params.push(gift_type);
   }
+  if (received_date) {
+    conditions.push('date(received_at) = date(?)');
+    params.push(String(received_date).trim());
+  }
   const whereClause = conditions.length ? ` WHERE ${conditions.join(' AND ')}` : '';
   const sqlCount = `SELECT COUNT(*) as total FROM gift_box_claims${whereClause}`;
+  const sqlSumFiltered = `SELECT COALESCE(SUM(amount), 0) as total_amount_filtered FROM gift_box_claims${whereClause}`;
+  const sqlSumAll = `SELECT COALESCE(SUM(amount), 0) as total_amount_all FROM gift_box_claims`;
   const sqlData = `SELECT * FROM gift_box_claims${whereClause} ORDER BY id DESC LIMIT ? OFFSET ?`;
 
   db.get(sqlCount, params, (err, countRow) => {
     if (err) return res.status(500).json({ ok: false, error: err.message });
     const total = countRow?.total || 0;
-    db.all(sqlData, [...params, limit, offset], (err2, rows) => {
-      if (err2) return res.status(500).json({ ok: false, error: err2.message });
-      db.all(
-        `SELECT DISTINCT gift_type FROM gift_box_claims ORDER BY gift_type`,
-        (err3, typeRows) => {
-          if (err3) return res.status(500).json({ ok: false, error: err3.message });
-          const gift_types = (typeRows || []).map((r) => r.gift_type);
-          res.json({ ok: true, total, page, limit, rows, gift_types });
-        }
-      );
+    db.get(sqlSumFiltered, params, (errSumFiltered, sumFilteredRow) => {
+      if (errSumFiltered) return res.status(500).json({ ok: false, error: errSumFiltered.message });
+      const total_amount_filtered = Number(sumFilteredRow?.total_amount_filtered) || 0;
+      db.get(sqlSumAll, [], (errSumAll, sumAllRow) => {
+        if (errSumAll) return res.status(500).json({ ok: false, error: errSumAll.message });
+        const total_amount_all = Number(sumAllRow?.total_amount_all) || 0;
+        db.all(sqlData, [...params, limit, offset], (err2, rows) => {
+          if (err2) return res.status(500).json({ ok: false, error: err2.message });
+          db.all(
+            `SELECT DISTINCT gift_type FROM gift_box_claims ORDER BY gift_type`,
+            (err3, typeRows) => {
+              if (err3) return res.status(500).json({ ok: false, error: err3.message });
+              const gift_types = (typeRows || []).map((r) => r.gift_type);
+              res.json({ ok: true, total, page, limit, rows, gift_types, total_amount_filtered, total_amount_all });
+            }
+          );
+        });
+      });
     });
   });
 });
 
-// ------------------- Thống kê / danh sách phiên nổ hũ (jackpot_session_records) -------------------
+// ------------------- Danh sách phiên nổ hũ (bảng jackpot_session_records) -------------------
 app.get('/api/jackpot-sessions', (req, res) => {
   const page = Math.max(1, parseInt(req.query.page, 10) || 1);
   const limit = Math.min(200, Math.max(1, parseInt(req.query.limit, 10) || 50));
   const offset = (page - 1) * limit;
   const username = req.query.username;
+  const session_date = req.query.session_date || req.query.sessionDate;
   const conditions = [];
   const params = [];
   if (username) {
@@ -614,11 +629,28 @@ app.get('/api/jackpot-sessions', (req, res) => {
     const like = `%${username}%`;
     params.push(like, like);
   }
+  if (session_date) {
+    // Mặc định lọc theo ngày của session_timestamp; nếu trống thì fallback updated_at.
+    // session_timestamp thực tế có thể ở dạng: "HH:mm:ss DD/MM/YYYY".
+    const ymd = String(session_date).trim(); // ví dụ: 2026-04-24
+    const m = ymd.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+    const dmy = m ? `${m[3]}/${m[2]}/${m[1]}` : ymd; // 24/04/2026
+    conditions.push(`(
+      (session_timestamp IS NOT NULL AND trim(session_timestamp) <> '' AND (
+        substr(trim(session_timestamp), 1, 10) = ? OR
+        substr(trim(session_timestamp), -10) = ?
+      ))
+      OR
+      ((session_timestamp IS NULL OR trim(session_timestamp) = '') AND substr(updated_at, 1, 10) = ?)
+    )`);
+    params.push(ymd, dmy, ymd);
+  }
   const whereClause = conditions.length ? ` WHERE ${conditions.join(' AND ')}` : '';
   const sqlCount = `SELECT COUNT(*) as total FROM jackpot_session_records${whereClause}`;
+  const sqlSumReceived = `SELECT COALESCE(SUM(amount_received), 0) as total_amount_received_filtered FROM jackpot_session_records${whereClause}`;
   const sqlData = `
     SELECT session_id, my_total_bet, game_total_bet, jackpot_amount, amount_received,
-           username, api_username, session_timestamp, updated_at
+           username, api_username, session_timestamp, created_at, updated_at
     FROM jackpot_session_records${whereClause}
     ORDER BY session_id DESC
     LIMIT ? OFFSET ?
@@ -627,10 +659,65 @@ app.get('/api/jackpot-sessions', (req, res) => {
   db.get(sqlCount, params, (err, countRow) => {
     if (err) return res.status(500).json({ ok: false, error: err.message });
     const total = countRow?.total || 0;
-    db.all(sqlData, [...params, limit, offset], (err2, rows) => {
-      if (err2) return res.status(500).json({ ok: false, error: err2.message });
-      res.json({ ok: true, total, page, limit, rows });
+    db.get(sqlSumReceived, params, (errSum, sumRow) => {
+      if (errSum) return res.status(500).json({ ok: false, error: errSum.message });
+      const total_amount_received_filtered = Number(sumRow?.total_amount_received_filtered) || 0;
+      db.all(sqlData, [...params, limit, offset], (err2, rows) => {
+        if (err2) return res.status(500).json({ ok: false, error: err2.message });
+        res.json({ ok: true, total, page, limit, rows, total_amount_received_filtered });
+      });
     });
+  });
+});
+
+// ------------------- Thống kê nổ hũ theo ngày (mặc định 10 ngày gần nhất) -------------------
+app.get('/api/jackpot-sessions/stats/daily', (req, res) => {
+  const days = Math.min(90, Math.max(1, parseInt(req.query.days, 10) || 10));
+  const username = req.query.username;
+  const params = [];
+  const where = ['day_key IS NOT NULL', "day_key <> ''"];
+  if (username) {
+    where.push('(username LIKE ? OR api_username LIKE ?)');
+    const like = `%${username}%`;
+    params.push(like, like);
+  }
+
+  const sql = `
+    SELECT
+      day_key as date,
+      COUNT(*) as session_count,
+      COALESCE(SUM(my_total_bet), 0) as my_total_bet,
+      COALESCE(SUM(game_total_bet), 0) as game_total_bet,
+      COALESCE(SUM(jackpot_amount), 0) as jackpot_amount,
+      COALESCE(SUM(amount_received), 0) as amount_received
+    FROM (
+      SELECT
+        username,
+        api_username,
+        my_total_bet,
+        game_total_bet,
+        jackpot_amount,
+        amount_received,
+        CASE
+          WHEN session_timestamp IS NOT NULL AND trim(session_timestamp) <> '' THEN
+            CASE
+              WHEN instr(session_timestamp, '/') > 0
+                THEN substr(trim(session_timestamp), -4) || '-' || substr(trim(session_timestamp), -7, 2) || '-' || substr(trim(session_timestamp), -10, 2)
+              ELSE substr(trim(session_timestamp), 1, 10)
+            END
+          ELSE substr(updated_at, 1, 10)
+        END as day_key
+      FROM jackpot_session_records
+    ) t
+    WHERE ${where.join(' AND ')}
+    GROUP BY day_key
+    ORDER BY day_key DESC
+    LIMIT ?
+  `;
+
+  db.all(sql, [...params, days], (err, rows) => {
+    if (err) return res.status(500).json({ ok: false, error: err.message });
+    res.json({ ok: true, days, rows: rows || [] });
   });
 });
 
@@ -1015,6 +1102,8 @@ function updateStreak(db, username, result) {
     }
 
     // apply new result
+    const prevType = currentType;
+    const prevLen = currentLen;
     if (currentType === result) {
       currentLen += 1;
     } else {
@@ -1035,6 +1124,22 @@ function updateStreak(db, username, result) {
     `, [currentType, currentLen, bestWin, bestLose, nowIso, username], err3 => {
       if (err3) console.error(err3);
     });
+
+    // Event "gãy dây > 8": ví dụ won-9 -> lost-1, hoặc lost-10 -> won-1
+    if (
+      prevType &&
+      prevType !== result &&
+      Number(prevLen || 0) > STREAK_BREAK_THRESHOLD_DEFAULT
+    ) {
+      pushStreakBreakEvent({
+        username,
+        break_from: prevType,         // won | lost
+        break_len: Number(prevLen || 0),
+        new_result: result,           // won | lost
+        threshold: STREAK_BREAK_THRESHOLD_DEFAULT,
+        today_vn: todayVN,
+      });
+    }
   });
 }
 
@@ -1448,6 +1553,92 @@ app.get('/api/accounts/out-of-money', (req, res) => {
   });
 });
 
+// ------------------- API: Hết Tiền ưu tiên dây ngắn (đẩy dây dài xuống cuối) -------------------
+app.get('/api/accounts/out-of-money-priority', (req, res) => {
+  const streakLimit = Math.max(1, parseInt(req.query.streak_limit || '8', 10));
+  const includeHighStreak = String(req.query.include_high_streak || '1') === '1';
+
+  const sql = `
+    SELECT
+      a.*,
+      MAX(d.createdAt) AS lastSuccessfulDeposit,
+      COALESCE(s.current_len, 0) AS streak_current_len,
+      MAX(COALESCE(s.best_win_today, 0), COALESCE(s.best_lose_today, 0)) AS streak_peak_today,
+      COALESCE(s.current_type, '') AS streak_current_type,
+      s.updated_at AS streak_updated_at,
+      CASE
+        WHEN MAX(COALESCE(s.best_win_today, 0), COALESCE(s.best_lose_today, 0)) > ? THEN 1
+        ELSE 0
+      END AS is_high_streak
+    FROM accounts a
+    LEFT JOIN deposit_orders d ON a.username = d.username AND d.status = 'Thành Công'
+    LEFT JOIN streaks s ON s.username = a.username
+    WHERE a.status = 'Hết Tiền'
+      AND a.username NOT IN (
+        SELECT username FROM deposit_orders WHERE status IN ('Chờ Nạp', 'Đang Nạp', 'Đã Nạp')
+      )
+    GROUP BY a.username
+    ORDER BY
+      CASE
+        WHEN ? = 1 THEN is_high_streak
+        ELSE 0
+      END ASC,
+      lastSuccessfulDeposit ASC,
+      a.username ASC
+  `;
+
+  db.all(sql, [streakLimit, includeHighStreak ? 1 : 0], (err, rows) => {
+    if (err) {
+      console.error("❌ Lỗi khi lấy danh sách out-of-money-priority:", err.message);
+      return res.status(500).json({ error: err.message });
+    }
+    const todayVN = dayjs().tz('Asia/Ho_Chi_Minh').format('YYYY-MM-DD');
+    const normalizedRows = (rows || []).map((row) => {
+      let updatedDay = null;
+      if (row?.streak_updated_at) {
+        try {
+          updatedDay = dayjs(row.streak_updated_at).tz('Asia/Ho_Chi_Minh').format('YYYY-MM-DD');
+        } catch (_) {
+          updatedDay = null;
+        }
+      }
+      if (updatedDay !== todayVN) {
+        return {
+          ...row,
+          streak_current_len: 0,
+          streak_peak_today: 0,
+          is_high_streak: 0,
+        };
+      }
+      return row;
+    });
+    normalizedRows.sort((a, b) => {
+      const leftHigh = includeHighStreak ? (Number(a.is_high_streak) || 0) : 0;
+      const rightHigh = includeHighStreak ? (Number(b.is_high_streak) || 0) : 0;
+      // 1) Nếu bật include_high_streak: đẩy acc có peak > streak_limit xuống cuối.
+      if (leftHigh !== rightHigh) return leftHigh - rightHigh;
+
+      const leftNoStreakToday =
+        !a?.streak_updated_at || Number(a.streak_peak_today || 0) <= 0 ? 1 : 0;
+      const rightNoStreakToday =
+        !b?.streak_updated_at || Number(b.streak_peak_today || 0) <= 0 ? 1 : 0;
+      // 2) Trong cùng nhóm high/normal: ưu tiên acc chưa có streak hôm nay (chưa chơi / chưa cập nhật).
+      if (leftNoStreakToday !== rightNoStreakToday) {
+        return rightNoStreakToday - leftNoStreakToday;
+      }
+
+      // 3) Fallback cũ: lần nạp gần nhất cũ hơn đứng trước.
+      const lastA = a.lastSuccessfulDeposit || '';
+      const lastB = b.lastSuccessfulDeposit || '';
+      if (lastA < lastB) return -1;
+      if (lastA > lastB) return 1;
+      return String(a.username || '').localeCompare(String(b.username || ''));
+    });
+    // Giữ format giống API cũ: trả về list
+    res.json(normalizedRows);
+  });
+});
+
 // ...existing code...
 
 // ------------------- Lấy toàn bộ tài khoản -------------------
@@ -1632,7 +1823,7 @@ app.post('/api/withdraw', async (req, res) => {
 // ...existing code...
 
 app.post('/api/accounts', (req, res) => {
-  const { game, username, loginPass, phone, withdrawPass, bank, accountNumber, accountHolder, device, nickname } = req.body;
+  const { game, username, nickname, loginPass, phone, withdrawPass, bank, accountNumber, accountHolder, device } = req.body;
   const uuid = uuidv4();
 
   // 1. Thêm Account
@@ -1657,7 +1848,7 @@ app.post('/api/accounts', (req, res) => {
       }
 
       if (!row) {
-        // 3. Nếu chưa có thì thêm UserProfile mới (nickname lưu ở user_profiles)
+        // 3. Nếu chưa có thì thêm UserProfile mới (nickname lưu tại user_profiles)
         const sqlProfile = `INSERT INTO user_profiles (username, nickname, status, device, balance) VALUES (?, ?, ?, ?, ?)`;
         db.run(sqlProfile, [username, nickname || null, "Mới Tạo", device || "", 0], function (err2) {
           if (err2) {
@@ -1677,17 +1868,18 @@ app.post('/api/accounts', (req, res) => {
           });
         });
       } else {
-        const respondExisting = () =>
-          res.json({
-            success: true,
-            account: {
-              id: accountId,
-              username,
-              game,
-              device
-            },
-            userProfileCreated: false
-          });
+        const respondExisting = () => res.json({
+          success: true,
+          account: {
+            id: accountId,
+            username,
+            game,
+            device
+          },
+          userProfileCreated: false
+        });
+
+        // Nếu profile đã tồn tại, vẫn đồng bộ nickname từ form accounts (nếu có gửi)
         if (Object.prototype.hasOwnProperty.call(req.body, 'nickname')) {
           db.run(
             `UPDATE user_profiles SET nickname = ? WHERE username = ?`,
@@ -1865,6 +2057,152 @@ app.get('/api/users/:username/streak', (req, res) => {
   });
 });
 
+// ------------------- API: Event feed "gãy dây > 8" -------------------
+app.get('/api/strategy/streak-break-events', (req, res) => {
+  const afterId = Math.max(0, parseInt(req.query.after_id || '0', 10));
+  const limit = Math.max(1, Math.min(500, parseInt(req.query.limit || '100', 10)));
+  const username = String(req.query.username || '').trim();
+
+  let items = streakBreakEvents;
+  if (username) {
+    items = items.filter((e) => String(e.username || '') === username);
+  }
+
+  const data = items
+    .filter((e) => Number(e.id || 0) > afterId)
+    .slice(0, limit);
+
+  const lastId = data.length > 0
+    ? Number(data[data.length - 1].id || afterId)
+    : afterId;
+
+  return res.json({
+    ok: true,
+    after_id: afterId,
+    last_id: lastId,
+    total: data.length,
+    data,
+  });
+});
+
+// ------------------- API: Claim user gãy dây > ngưỡng (server -> client cache) -------------------
+app.get('/api/strategy/streak-break-claim', (req, res) => {
+  const threshold = Math.max(1, parseInt(req.query.threshold || '8', 10));
+  const limit = Math.max(1, Math.min(200, parseInt(req.query.limit || '50', 10)));
+  const todayVN = dayjs().tz('Asia/Ho_Chi_Minh').format('YYYY-MM-DD');
+
+  const sql = `
+    SELECT
+      up.username,
+      up.status,
+      COALESCE(s.current_type, '') AS current_type,
+      COALESCE(s.current_len, 0) AS current_len,
+      COALESCE(s.best_win_today, 0) AS best_win_today,
+      COALESCE(s.best_lose_today, 0) AS best_lose_today,
+      COALESCE(up.streak_last_alert_win, 0) AS streak_last_alert_win,
+      COALESCE(up.streak_last_alert_lose, 0) AS streak_last_alert_lose,
+      s.updated_at
+    FROM user_profiles up
+    INNER JOIN streaks s ON s.username = up.username
+    WHERE up.status <> 'Hết Tiền'
+  `;
+
+  db.all(sql, [], (err, rows) => {
+    if (err) {
+      console.error("❌ Lỗi lấy danh sách streak-break-claim:", err.message);
+      return res.status(500).json({ error: "Không thể lấy danh sách streak-break-claim", detail: err.message });
+    }
+
+    const candidates = [];
+    for (const row of rows || []) {
+      const updatedDay = row.updated_at
+        ? dayjs(row.updated_at).tz('Asia/Ho_Chi_Minh').format('YYYY-MM-DD')
+        : null;
+      if (updatedDay !== todayVN) continue; // Không dùng dữ liệu streak của ngày cũ
+
+      // Gãy dây thắng > threshold: current chuyển sang lost, và best_win_today vượt ngưỡng
+      const winBreakPeak = Number(row.best_win_today || 0);
+      if (
+        row.current_type === 'lost' &&
+        winBreakPeak > threshold &&
+        Number(row.streak_last_alert_win || 0) < winBreakPeak
+      ) {
+        candidates.push({
+          username: row.username,
+          status: row.status,
+          break_side: 'win',
+          peak_today: winBreakPeak,
+          current_type: row.current_type,
+          current_len: Number(row.current_len || 0),
+          updated_at: row.updated_at,
+        });
+      }
+
+      // Gãy dây thua > threshold: current chuyển sang won, và best_lose_today vượt ngưỡng
+      const loseBreakPeak = Number(row.best_lose_today || 0);
+      if (
+        row.current_type === 'won' &&
+        loseBreakPeak > threshold &&
+        Number(row.streak_last_alert_lose || 0) < loseBreakPeak
+      ) {
+        candidates.push({
+          username: row.username,
+          status: row.status,
+          break_side: 'lose',
+          peak_today: loseBreakPeak,
+          current_type: row.current_type,
+          current_len: Number(row.current_len || 0),
+          updated_at: row.updated_at,
+        });
+      }
+    }
+
+    candidates.sort((a, b) => {
+      if (b.peak_today !== a.peak_today) return b.peak_today - a.peak_today;
+      return String(a.username || '').localeCompare(String(b.username || ''));
+    });
+
+    const claimed = candidates.slice(0, limit);
+    if (claimed.length === 0) {
+      return res.json({
+        ok: true,
+        threshold,
+        total: 0,
+        data: [],
+      });
+    }
+
+    let pending = claimed.length;
+    const failedUpdates = [];
+    const done = () => {
+      if (pending > 0) return;
+      res.json({
+        ok: failedUpdates.length === 0,
+        threshold,
+        total: claimed.length,
+        failed_updates: failedUpdates,
+        data: claimed,
+      });
+    };
+
+    claimed.forEach((item) => {
+      const col = item.break_side === 'win' ? 'streak_last_alert_win' : 'streak_last_alert_lose';
+      const sqlUpdate = `UPDATE user_profiles SET ${col} = ? WHERE username = ?`;
+      db.run(sqlUpdate, [item.peak_today, item.username], function (updateErr) {
+        if (updateErr) {
+          failedUpdates.push({
+            username: item.username,
+            break_side: item.break_side,
+            error: updateErr.message,
+          });
+        }
+        pending -= 1;
+        done();
+      });
+    });
+  });
+});
+
 // ------------------- Đổi tên username an toàn -------------------
 app.post('/api/users/rename', (req, res) => {
   const { oldUsername, newUsername } = req.body;
@@ -1903,7 +2241,6 @@ app.post('/api/users/rename', (req, res) => {
           { name: 'accounts', required: true },
           { name: 'transaction_details', required: false },
           { name: 'deposit_orders', required: false },
-          { name: 'bet_history', required: false },
           { name: 'bet_totals', required: false },
           { name: 'streaks', required: false }
         ];
@@ -2006,6 +2343,7 @@ app.put('/api/accounts/:username', (req, res) => {
   const hasNickname = Object.prototype.hasOwnProperty.call(fields, 'nickname');
   const nicknameVal = fields.nickname;
 
+  // build SET động
   const updates = [];
   const values = [];
   for (const key in fields) {
@@ -2017,6 +2355,21 @@ app.put('/api/accounts/:username', (req, res) => {
   }
   values.push(username);
 
+  const syncNickname = (cb) => {
+    if (!hasNickname) return cb();
+    db.run(
+      `UPDATE user_profiles SET nickname = ? WHERE username = ?`,
+      [nicknameVal || null, username],
+      (errNick) => {
+        if (errNick) {
+          console.error("❌ Lỗi khi đồng bộ nickname sang UserProfile:", errNick.message);
+          return res.status(500).json({ error: "Không thể cập nhật nickname user profile" });
+        }
+        cb();
+      }
+    );
+  };
+
   const respondMerged = () => {
     db.get(
       `
@@ -2024,7 +2377,7 @@ app.put('/api/accounts/:username', (req, res) => {
       FROM accounts a
       LEFT JOIN user_profiles p ON p.username = a.username
       WHERE a.username = ?
-    `,
+      `,
       [username],
       (err3, row) => {
         if (err3) {
@@ -2033,15 +2386,6 @@ app.put('/api/accounts/:username', (req, res) => {
         res.json(row);
       }
     );
-  };
-
-  const syncNickname = (cb) => {
-    if (!hasNickname) return cb();
-    const v = nicknameVal == null || nicknameVal === '' ? null : nicknameVal;
-    db.run(`UPDATE user_profiles SET nickname = ? WHERE username = ?`, [v, username], (err) => {
-      if (err) console.error("❌ Lỗi khi đồng bộ nickname sang UserProfile:", err.message);
-      cb();
-    });
   };
 
   if (updates.length === 0) {
@@ -2062,59 +2406,32 @@ app.put('/api/accounts/:username', (req, res) => {
       return res.status(404).json({ error: "Không tìm thấy tài khoản" });
     }
 
-    const afterStatus = () => {
-      syncNickname(() => respondMerged());
-    };
-
+    // 🔁 Nếu có status -> đồng bộ sang UserProfile
     if (typeof fields.status !== "undefined") {
       const sqlUser = `UPDATE user_profiles SET status = ? WHERE username = ?`;
       db.run(sqlUser, [fields.status, username], (err2) => {
         if (err2) {
           console.error("❌ Lỗi khi đồng bộ status sang UserProfile:", err2.message);
         }
-        afterStatus();
       });
-    } else {
-      afterStatus();
     }
+
+    syncNickname(() => respondMerged());
   });
 });
 
 // ------------------- Xóa tài khoản theo username -------------------
 app.delete('/api/accounts/:username', (req, res) => {
-  const username = req.params.username;
-  db.serialize(() => {
-    db.run('BEGIN TRANSACTION', (tErr) => {
-      if (tErr) {
-        console.error("❌ BEGIN TRANSACTION:", tErr.message);
-        return res.status(500).json({ error: "Không thể xoá tài khoản" });
-      }
-      db.run(`DELETE FROM accounts WHERE username = ?`, [username], function (err) {
-        if (err) {
-          console.error("❌ Lỗi khi xoá tài khoản:", err.message);
-          db.run('ROLLBACK');
-          return res.status(500).json({ error: "Không thể xoá tài khoản" });
-        }
-        if (this.changes === 0) {
-          db.run('ROLLBACK');
-          return res.status(404).json({ error: "Không tìm thấy tài khoản" });
-        }
-        db.run(`DELETE FROM user_profiles WHERE username = ?`, [username], function (err2) {
-          if (err2) {
-            console.error("❌ Lỗi khi xoá user_profiles:", err2.message);
-            db.run('ROLLBACK');
-            return res.status(500).json({ error: "Không thể xoá hồ sơ user (nickname) đi kèm" });
-          }
-          db.run('COMMIT', (cErr) => {
-            if (cErr) {
-              console.error("❌ COMMIT:", cErr.message);
-              return res.status(500).json({ error: cErr.message });
-            }
-            res.json({ success: true });
-          });
-        });
-      });
-    });
+  const sql = `DELETE FROM accounts WHERE username = ?`;
+  db.run(sql, [req.params.username], function (err) {
+    if (err) {
+      console.error("❌ Lỗi khi xoá tài khoản:", err.message);
+      return res.status(500).json({ error: "Không thể xoá tài khoản" });
+    }
+    if (this.changes === 0) {
+      return res.status(404).json({ error: "Không tìm thấy tài khoản" });
+    }
+    res.json({ success: true });
   });
 });
 // ------------------- Gán thiết bị cho tài khoản -------------------
@@ -2589,48 +2906,11 @@ app.post('/api/users/accessToken', (req,res)=>{
   });
 });
 
-// ------------------- API: Lưu lịch sử cược -------------------
+// ------------------- API: Lưu lịch sử cược (đã tắt — bảng bet_history đã gỡ) -------------------
 app.post("/api/bet-history", (req, res) => {
-  try {
-    const { game, device, username, amount, door, status, balance, prize, dices } = req.body;
-
-    const sql = `INSERT INTO bet_history 
-      (game, device, username, amount, door, status, balance, prize, dices, time) 
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))`;
-
-    db.run(
-      sql,
-      [
-        game || null,
-        device || null,
-        username || null,
-        amount || 0,
-        door || null,
-        status || "placed",
-        balance || 0,
-        prize || 0,
-        dices ? JSON.stringify(dices) : null
-      ],
-      async function (err) {
-        if (err) {
-          console.error("❌ Lỗi khi lưu bet-history:", err.message);
-          return res.status(500).json({ error: "Không thể lưu lịch sử cược" });
-        }
-
-        // ➜ Sau khi lưu bet_history → cập nhật bet_totals
-        try {
-          await updateTotals(username, amount);
-        } catch (totalErr) {
-          console.error("❌ Lỗi khi cập nhật bet_totals:", totalErr);
-        }
-
-        res.json({ success: true, id: this.lastID });
-      }
-    );
-  } catch (err) {
-    console.error("❌ Lỗi khi lưu bet-history:", err);
-    res.status(500).json({ error: err.message });
-  }
+  res.status(410).json({
+    error: "bet_history đã ngừng. Không lưu lịch sử cược qua API này nữa.",
+  });
 });
 
 
@@ -2701,35 +2981,17 @@ app.get("/api/bet-history/stats/lc79", (req, res) => {
     endOfMonthUTC = endVN.utc().format("YYYY-MM-DD HH:mm:ss");
   }
 
-  // 🔍 Query theo UTC
-  const queries = {
-    day: `SELECT SUM(amount) as total FROM bet_history WHERE game='LC79' AND time BETWEEN ? AND ?`,
-    week: `SELECT SUM(amount) as total FROM bet_history WHERE game='LC79' AND time BETWEEN ? AND ?`,
-    month: `SELECT SUM(amount) as total FROM bet_history WHERE game='LC79' AND time BETWEEN ? AND ?`
-  };
-
-  db.get(queries.day, [startOfDayUTC, endOfDayUTC], (err1, dRow) => {
-    if (err1) return res.status(500).json({ error: err1.message });
-
-    db.get(queries.week, [startOfWeekUTC, endOfWeekUTC], (err2, wRow) => {
-      if (err2) return res.status(500).json({ error: err2.message });
-
-      db.get(queries.month, [startOfMonthUTC, endOfMonthUTC], (err3, mRow) => {
-        if (err3) return res.status(500).json({ error: err3.message });
-
-        res.json({
-          game: "LC79",
-          totalDay: dRow?.total || 0,
-          totalWeek: wRow?.total || 0,
-          totalMonth: mRow?.total || 0,
-          range: {
-            day: [startOfDayUTC, endOfDayUTC],
-            week: [startOfWeekUTC, endOfWeekUTC],
-            month: [startOfMonthUTC, endOfMonthUTC],
-          },
-        });
-      });
-    });
+  // bet_history đã gỡ — luôn trả 0 (giữ shape API cho giao diện cũ)
+  res.json({
+    game: "LC79",
+    totalDay: 0,
+    totalWeek: 0,
+    totalMonth: 0,
+    range: {
+      day: [startOfDayUTC, endOfDayUTC],
+      week: [startOfWeekUTC, endOfWeekUTC],
+      month: [startOfMonthUTC, endOfMonthUTC],
+    },
   });
 });
 
@@ -2761,114 +3023,36 @@ app.get("/api/bet-history/stats/lc79/users", (req, res) => {
     endOfMonthUTC   = endVN.utc().format("YYYY-MM-DD HH:mm:ss");
   }
 
-  const sqlDay = `
-    SELECT a.username, SUM(b.amount) as totalDay
-    FROM accounts a
-    LEFT JOIN bet_history b 
-      ON a.username = b.username
-      AND b.game='LC79'
-      AND b.time BETWEEN ? AND ?
-    GROUP BY a.username
-    ORDER BY a.id ASC
-  `;
-
-  const sqlWeek = `
-    SELECT a.username, SUM(b.amount) as totalWeek
-    FROM accounts a
-    LEFT JOIN bet_history b 
-      ON a.username = b.username
-      AND b.game='LC79'
-      AND b.time BETWEEN ? AND ?
-    GROUP BY a.username
-    ORDER BY a.id ASC
-  `;
-
-  const sqlMonth = `
-    SELECT a.username, SUM(b.amount) as totalMonth
-    FROM accounts a
-    LEFT JOIN bet_history b 
-      ON a.username = b.username
-      AND b.game='LC79'
-      AND b.time BETWEEN ? AND ?
-    GROUP BY a.username
-    ORDER BY a.id ASC
-  `;
-
-  const sqlAll = `
-    SELECT a.username, SUM(b.amount) as totalAll
-    FROM accounts a
-    LEFT JOIN bet_history b 
-      ON a.username = b.username
-      AND b.game='LC79'
-    GROUP BY a.username
-    ORDER BY a.id ASC
-  `;
-
-
-  const statsMap = {};
-  let startedAt = new Date();
-  db.all(sqlDay, [startOfDayUTC, endOfDayUTC], (err1, dRows) => {
-    console.log(`⏱️ Truy vấn tổng cược NGÀY xong sau ${new Date() - startedAt} ms`);
-    if (err1) return res.status(500).json({ error: err1.message });
-    dRows.forEach(d => statsMap[d.username] = { username: d.username, totalDay: d.totalDay || 0, totalWeek: 0, totalMonth: 0, totalAll: 0 });
-
-    startedAt = new Date();
-    db.all(sqlWeek, [startOfWeekUTC, endOfWeekUTC], (err2, wRows) => {
-      console.log(`⏱️ Truy vấn tổng cược TUẦN xong sau ${new Date() - startedAt} ms`);
-      if (err2) return res.status(500).json({ error: err2.message });
-      wRows.forEach(w => {
-        if (!statsMap[w.username]) statsMap[w.username] = { username: w.username, totalDay: 0, totalWeek: 0, totalMonth: 0, totalAll: 0 };
-        statsMap[w.username].totalWeek = w.totalWeek || 0;
+  // bet_history đã gỡ — danh sách account LC79 với tổng cược = 0
+  db.all(
+    `SELECT username FROM accounts WHERE game = 'LC79' ORDER BY id ASC`,
+    [],
+    (err, rows) => {
+      if (err) return res.status(500).json({ error: err.message });
+      const stats = (rows || []).map((r) => ({
+        username: r.username,
+        totalDay: 0,
+        totalWeek: 0,
+        totalMonth: 0,
+        totalAll: 0,
+      }));
+      res.json({
+        game: "LC79",
+        stats,
+        range: {
+          day: [startOfDayUTC, endOfDayUTC],
+          week: [startOfWeekUTC, endOfWeekUTC],
+          month: [startOfMonthUTC, endOfMonthUTC],
+        },
       });
-
-      startedAt = new Date();
-      db.all(sqlMonth, [startOfMonthUTC, endOfMonthUTC], (err3, mRows) => {
-        console.log(`⏱️ Truy vấn tổng cược THÁNG xong sau ${new Date() - startedAt} ms`);
-        if (err3) return res.status(500).json({ error: err3.message });
-        mRows.forEach(m => {
-          if (!statsMap[m.username]) statsMap[m.username] = { username: m.username, totalDay: 0, totalWeek: 0, totalMonth: 0, totalAll: 0 };
-          statsMap[m.username].totalMonth = m.totalMonth || 0;
-        });
-
-        // ➕ Gộp totalAll
-        startedAt = new Date();
-        db.all(sqlAll, [], (err4, aRows) => {
-          console.log(`⏱️ Truy vấn tổng cược TẤT CẢ xong sau ${new Date() - startedAt} ms`);
-          if (err4) return res.status(500).json({ error: err4.message });
-          aRows.forEach(a => {
-            if (!statsMap[a.username]) statsMap[a.username] = { username: a.username, totalDay: 0, totalWeek: 0, totalMonth: 0, totalAll: 0 };
-            statsMap[a.username].totalAll = a.totalAll || 0;
-          });
-
-          res.json({
-            game: "LC79",
-            stats: Object.values(statsMap),
-            range: { 
-              day: [startOfDayUTC, endOfDayUTC], 
-              week: [startOfWeekUTC, endOfWeekUTC], 
-              month: [startOfMonthUTC, endOfMonthUTC] 
-            }
-          });
-        });
-      });
-    });
-  });
+    }
+  );
 });
 
 
-// ------------------- Lấy lịch sử cược (bet history) -------------------
+// ------------------- Lấy lịch sử cược (bet_history đã gỡ) -------------------
 app.get('/api/bet-history', (req, res) => {
-  const sql = `SELECT * FROM bet_history ORDER BY time DESC`;
-  db.all(sql, [], (err, rows) => {
-    if (err) return res.status(500).json({ error: "Lỗi server" });
-
-    const result = rows.map(r => ({
-      ...r,
-      dices: r.dices ? JSON.parse(r.dices) : []
-    }));
-
-    res.json(result);
-  });
+  res.json([]);
 });
 
 // ------------------- Thống kê giao dịch (nạp/rút) theo ngày, tuần, tất cả -------------------
@@ -2924,49 +3108,9 @@ app.get('/api/transactions/stats', (req, res) => {
 });
 
 
-// ------------------- Thống kê tổng cược theo thiết bị + game -------------------
+// ------------------- Thống kê tổng cược theo thiết bị + game (bet_history đã gỡ) -------------------
 app.get('/api/bet-history/stats', (req, res) => {
-  const now = dayjs().tz('Asia/Ho_Chi_Minh');
-  const startOfDay = now.startOf('day').format("YYYY-MM-DD HH:mm:ss");
-  const dow = now.day();
-  const startOfWeek = now.subtract(dow, 'day').startOf('day').format("YYYY-MM-DD HH:mm:ss");
-  let startOfMonth;
-  if (now.date() >= 31) {
-    startOfMonth = now.startOf('day').format("YYYY-MM-DD HH:mm:ss");
-  } else {
-    startOfMonth = now.subtract(1, 'month').date(31).startOf('day').format("YYYY-MM-DD HH:mm:ss");
-  }
-
-  const runAgg = (from) => `SELECT device, game, SUM(amount) as total FROM bet_history WHERE time >= ? GROUP BY device, game`;
-
-  db.all(runAgg(startOfDay), [startOfDay], (err1, dayRows) => {
-    if (err1) return res.status(500).json({ error: err1.message });
-    db.all(runAgg(startOfWeek), [startOfWeek], (err2, weekRows) => {
-      if (err2) return res.status(500).json({ error: err2.message });
-      db.all(runAgg(startOfMonth), [startOfMonth], (err3, monthRows) => {
-        if (err3) return res.status(500).json({ error: err3.message });
-
-        const keys = new Set([
-          ...dayRows.map(r => JSON.stringify({ device: r.device, game: r.game })),
-          ...weekRows.map(r => JSON.stringify({ device: r.device, game: r.game })),
-          ...monthRows.map(r => JSON.stringify({ device: r.device, game: r.game }))
-        ]);
-
-        const result = Array.from(keys).map(k => {
-          const key = JSON.parse(k);
-          return {
-            device: key.device,
-            game: key.game,
-            dayTotal: dayRows.find(r => r.device === key.device && r.game === key.game)?.total || 0,
-            weekTotal: weekRows.find(r => r.device === key.device && r.game === key.game)?.total || 0,
-            monthTotal: monthRows.find(r => r.device === key.device && r.game === key.game)?.total || 0,
-          };
-        });
-
-        res.json(result);
-      });
-    });
-  });
+  res.json([]);
 });
 
 
@@ -3272,7 +3416,6 @@ app.put('/api/device-balances/:device', (req, res) => {
         await run(`UPDATE accounts SET device = ? WHERE device = ?`, [targetDevice, oldDevice]);
         await run(`UPDATE proxies SET device = ? WHERE device = ?`, [targetDevice, oldDevice]);
         await run(`UPDATE transaction_details SET deviceNap = ?, db_time = datetime('now','localtime') WHERE deviceNap = ?`, [targetDevice, oldDevice]);
-        await run(`UPDATE bet_history SET device = ? WHERE device = ?`, [targetDevice, oldDevice]);
         // (tuỳ chọn) device_reports.devices là JSON -> nếu cần, xử lý sau
       }
 
@@ -3290,36 +3433,52 @@ app.put('/api/device-balances/:device', (req, res) => {
 
 // ------------------- APIs cho bet_totals -------------------
 
-// GET /api/bet-totals?page=1&limit=50
-app.get('/api/bet-totals', async (req, res) => {
+// Cộng dồn tổng cược (ngày/tuần/tháng/all) — thay cho việc ghi bet_history + updateTotals khi INSERT
+app.post('/api/bet-totals/increment', async (req, res) => {
+  try {
+    const { username, amount } = req.body || {};
+    if (!username || amount == null || amount === '') {
+      return res.status(400).json({ error: 'Thiếu username hoặc amount' });
+    }
+    const n = Number(amount);
+    if (!Number.isFinite(n) || n <= 0) {
+      return res.status(400).json({ error: 'amount không hợp lệ' });
+    }
+    await updateTotals(username, Math.floor(n));
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ error: String(e?.message || e) });
+  }
+});
+
+// Đường dẫn cụ thể (/daily, /top) đăng ký TRƯỚC GET /api/bet-totals để luôn khớp đúng (Express 5 / path-to-regexp).
+// GET /api/bet-totals/daily?page=1&limit=10000 — check tổng cược ngày (total_day), sort giảm dần, tie-break username
+app.get('/api/bet-totals/daily', async (req, res) => {
   try {
     const page = Math.max(1, parseInt(req.query.page) || 1);
-    const limit = Math.max(1, parseInt(req.query.limit) || 500);
+    const limit = Math.max(1, parseInt(req.query.limit) || 10000);
     const offset = (page - 1) * limit;
-    const username = req.query.username;
-
-    if (username) {
-      await refreshBetTotalsForUser(username);
-      return db.get(`SELECT * FROM bet_totals WHERE username = ?`, [username], (err, row) => {
-        if (err) return res.status(500).json({ error: err.message });
-        if (!row) return res.status(404).json({ error: 'Không tìm thấy username' });
-        return res.json(row);
-      });
-    }
-
-    await refreshBetTotalsAll(); // ✅ reset theo VN nếu đổi ngày/tuần/tháng mà chưa có bet
-
+    await refreshBetTotalsAll();
     db.get(`SELECT COUNT(*) as total FROM bet_totals`, [], (err, countRow) => {
       if (err) return res.status(500).json({ error: err.message });
       const total = countRow?.total || 0;
       db.all(
-        `SELECT * FROM bet_totals
-         ORDER BY total_all DESC
+        `SELECT username, total_day, day_start, total_week, total_month, total_all, updated_at
+         FROM bet_totals
+         ORDER BY total_day DESC, username ASC
          LIMIT ? OFFSET ?`,
         [limit, offset],
         (err2, rows) => {
           if (err2) return res.status(500).json({ error: err2.message });
-          res.json({ page, limit, totalItems: total, totalPages: Math.ceil(total/limit), data: rows });
+          res.json({
+            metric: 'total_day',
+            description: 'Tổng cược trong ngày trên CMS (bet_totals), đã refresh theo mốc VN',
+            page,
+            limit,
+            totalItems: total,
+            totalPages: Math.ceil(total / limit) || 1,
+            data: rows,
+          });
         }
       );
     });
@@ -3344,6 +3503,55 @@ app.get('/api/bet-totals/top', async (req, res) => {
     db.all(sql, [limit], (err, rows) => {
       if (err) return res.status(500).json({ error: err.message });
       res.json({ period, limit, data: rows });
+    });
+  } catch (e) {
+    res.status(500).json({ error: String(e) });
+  }
+});
+
+// GET /api/bet-totals?page=1&limit=10000 — danh sách tổng cược; mặc định sort=total_day DESC (tổng cược ngày).
+// Dùng cho refresh V2: so với mốc top-bet hạng 500 → 1 user total_day < mốc, còn lại ≥ mốc.
+// sort: total_day | total_all | total_week | total_month (tie-break username ASC).
+app.get('/api/bet-totals', async (req, res) => {
+  try {
+    const page = Math.max(1, parseInt(req.query.page) || 1);
+    const limit = Math.max(1, parseInt(req.query.limit) || 500);
+    const offset = (page - 1) * limit;
+    const username = req.query.username;
+
+    const sortAllowed = {
+      total_day: 'total_day',
+      total_all: 'total_all',
+      total_week: 'total_week',
+      total_month: 'total_month',
+    };
+    const sortKey = String(req.query.sort || 'total_day').toLowerCase();
+    const orderCol = sortAllowed[sortKey] || 'total_day';
+
+    if (username) {
+      await refreshBetTotalsForUser(username);
+      return db.get(`SELECT * FROM bet_totals WHERE username = ?`, [username], (err, row) => {
+        if (err) return res.status(500).json({ error: err.message });
+        if (!row) return res.status(404).json({ error: 'Không tìm thấy username' });
+        return res.json(row);
+      });
+    }
+
+    await refreshBetTotalsAll(); // ✅ reset theo VN nếu đổi ngày/tuần/tháng mà chưa có bet
+
+    db.get(`SELECT COUNT(*) as total FROM bet_totals`, [], (err, countRow) => {
+      if (err) return res.status(500).json({ error: err.message });
+      const total = countRow?.total || 0;
+      db.all(
+        `SELECT * FROM bet_totals
+         ORDER BY ${orderCol} DESC, username ASC
+         LIMIT ? OFFSET ?`,
+        [limit, offset],
+        (err2, rows) => {
+          if (err2) return res.status(500).json({ error: err2.message });
+          res.json({ page, limit, sort: orderCol, totalItems: total, totalPages: Math.ceil(total/limit), data: rows });
+        }
+      );
     });
   } catch (e) {
     res.status(500).json({ error: String(e) });
@@ -3664,25 +3872,16 @@ app.get('/api/device-balances', (req, res) => {
     res.json(rows);
   });
 });
-// ------------------- Xoá toàn bộ lịch sử cược của 1 user -------------------
+// ------------------- Xoá lịch sử cược (bet_history đã gỡ — API giữ để tương thích) -------------------
 app.delete('/api/bet-history/:username', (req, res) => {
   const username = req.params.username;
-
   if (!username) {
     return res.status(400).json({ error: "Thiếu username" });
   }
-
-  const sql = `DELETE FROM bet_history WHERE username = ?`;
-  db.run(sql, [username], function (err) {
-    if (err) {
-      console.error("❌ Lỗi khi xoá bet_history:", err.message);
-      return res.status(500).json({ error: "Không thể xoá lịch sử cược" });
-    }
-    res.json({
-      success: true,
-      deletedRows: this.changes,
-      message: `Đã xoá ${this.changes} dòng lịch sử cược của user ${username}`
-    });
+  res.json({
+    success: true,
+    deletedRows: 0,
+    message: `bet_history đã bỏ — không còn dữ liệu để xoá (${username})`,
   });
 });
 // ------------------- Xoá TOÀN BỘ lịch sử nạp/rút của 1 user -------------------

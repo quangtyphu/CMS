@@ -41,6 +41,8 @@
     <select id="filterGiftType" onchange="loadPage(1)">
       <option value="">Tất cả</option>
     </select>
+    <label for="filterReceivedDate">Ngày nhận</label>
+    <input id="filterReceivedDate" type="date" onchange="loadPage(1)" />
     <label for="searchUsername">Username</label>
     <input id="searchUsername" type="text" placeholder="Lọc theo username (gần đúng)" style="min-width:220px;" />
     <button type="button" onclick="loadPage(1)">Áp dụng</button>
@@ -68,7 +70,7 @@
     const limit = 50;
     let totalPages = 1;
     /** Trùng nhóm phân loại trong server.js (classifyGiftTitle) — luôn hiện trong dropdown */
-    const KNOWN_GIFT_TYPES = ['Tóp', 'Chuỗi', 'Hoàn thua ngày LC79', 'Lộc may mắn LC79', 'Hoàn cược ngày', 'Khác'];
+    const KNOWN_GIFT_TYPES = ['Cao thủ tài xỉu', 'Tóp cược ngày', 'Tóp', 'Chuỗi', 'Hoàn thua tuần LC79', 'Hoàn thua ngày LC79', 'Lộc may mắn LC79', 'Hoàn cược tuần', 'Hoàn cược tháng', 'Hoàn cược ngày', 'Khác'];
 
     function giftTypesForSelect(serverTypes, rows) {
       const set = new Set(KNOWN_GIFT_TYPES);
@@ -90,20 +92,32 @@
       if (types.includes(keep)) sel.value = keep;
     }
 
+    function todayLocalYmd() {
+      const now = new Date();
+      const y = now.getFullYear();
+      const m = String(now.getMonth() + 1).padStart(2, '0');
+      const d = String(now.getDate()).padStart(2, '0');
+      return `${y}-${m}-${d}`;
+    }
+
     function loadPage(page) {
       const gift_type = document.getElementById('filterGiftType').value.trim();
       const username = document.getElementById('searchUsername').value.trim();
+      const received_date = document.getElementById('filterReceivedDate').value.trim();
       const params = new URLSearchParams({ page: String(page), limit: String(limit) });
       if (gift_type) params.set('gift_type', gift_type);
       if (username) params.set('username', username);
+      if (received_date) params.set('received_date', received_date);
 
       axios.get(`/api/gift-box-claims?${params}`)
         .then(res => {
-          const { total, page: p, rows, gift_types } = res.data;
+          const { total, page: p, rows, gift_types, total_amount_filtered, total_amount_all } = res.data;
           applyGiftTypeSelect(giftTypesForSelect(gift_types, rows));
           totalPages = Math.max(1, Math.ceil(total / limit));
+          const amountFiltered = Number(total_amount_filtered) || 0;
+          const amountAll = Number(total_amount_all) || 0;
           document.getElementById('summary').textContent =
-            `Tổng ${total.toLocaleString()} bản ghi — trang ${p}/${totalPages} (mỗi trang ${limit})`;
+            `Tổng ${total.toLocaleString()} bản ghi — trang ${p}/${totalPages} (mỗi trang ${limit}) — Tổng tiền nhận (filter): ${amountFiltered.toLocaleString()}đ — Tổng tiền nhận (all): ${amountAll.toLocaleString()}đ`;
 
           const tbody = document.getElementById('dataBody');
           tbody.innerHTML = '';
@@ -151,6 +165,7 @@
         .replace(/"/g, '&quot;');
     }
 
+    document.getElementById('filterReceivedDate').value = todayLocalYmd();
     loadPage(1);
   </script>
 </body>
