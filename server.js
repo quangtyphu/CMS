@@ -18,6 +18,22 @@ const schedule = require('node-schedule');
 
 const app = express();
 const PORT = 3000;
+
+// Chuẩn hóa path: tránh lỗi Cannot GET //api/... khi gõ nhầm 127.0.0.1:3000//api/...
+app.use((req, _res, next) => {
+  const raw = typeof req.originalUrl === 'string' ? req.originalUrl : req.url;
+  if (typeof raw === 'string' && raw.includes('//')) {
+    const q = raw.indexOf('?');
+    const pathPart = q === -1 ? raw : raw.slice(0, q);
+    const search = q === -1 ? '' : raw.slice(q);
+    const normalized = pathPart.replace(/\/{2,}/g, '/') || '/';
+    const fixed = normalized + search;
+    req.url = fixed;
+    if (typeof req.originalUrl === 'string') req.originalUrl = fixed;
+  }
+  next();
+});
+
 // 🧩 Thêm ở đầu file (sau các require khác)
 const fetch = (...args) => import('node-fetch').then(({ default: fetch }) => fetch(...args));
 app.use(cors());
@@ -1911,9 +1927,84 @@ app.get('/api/users', (req, res) => {
   });
 });
 
+// LC79 + trạng thái Đang Chơi / Hết Tiền, kèm tổng cược ngày (LEFT bet_totals — không có dòng thì total_day = 0).
+// GET /api/users/lc79-playing-or-out?page=1&limit=10000  (alias: /api/lc79/playing-or-out)
+// profile_status=Đang Chơi | Hết Tiền (bỏ trống = cả hai). sort=total_day|username (mặc định total_day DESC).
+// Express 5 có thể khớp /api/users/:username trước path tĩnh — cũng gọi handler từ :username khi slug trùng.
+async function handleLc79PlayingOrOutList(req, res) {
+  try {
+    await refreshBetTotalsAll();
+    const page = Math.max(1, parseInt(req.query.page, 10) || 1);
+    const limit = Math.max(1, Math.min(50000, parseInt(req.query.limit, 10) || 10000));
+    const offset = (page - 1) * limit;
+    const ps = String(req.query.profile_status || '').trim();
+    let statusClause;
+    if (!ps) {
+      statusClause = `up.status IN ('Đang Chơi', 'Hết Tiền')`;
+    } else if (ps === 'Đang Chơi' || ps === 'Hết Tiền') {
+      statusClause = `up.status = '${ps.replace(/'/g, "''")}'`;
+    } else {
+      return res.status(400).json({
+        error: 'profile_status chỉ nhận Đang Chơi, Hết Tiền, hoặc bỏ trống (cả hai)',
+      });
+    }
+    const sortKey = String(req.query.sort || 'total_day').toLowerCase();
+    const orderSql =
+      sortKey === 'username'
+        ? 'up.username ASC'
+        : 'COALESCE(bt.total_day, 0) DESC, up.username ASC';
+
+    const scopeWhere = `${statusClause}
+      AND EXISTS (SELECT 1 FROM accounts ac WHERE ac.username = up.username AND ac.game = 'LC79')`;
+
+    const countSql = `SELECT COUNT(*) AS total
+      FROM user_profiles up
+      WHERE ${scopeWhere}`;
+
+    const listSql = `SELECT up.id AS profile_id, up.username, up.nickname, up.status, up.balance, up.device, up.proxy,
+        COALESCE(bt.total_day, 0) AS total_day,
+        bt.day_start,
+        COALESCE(bt.total_week, 0) AS total_week,
+        COALESCE(bt.total_month, 0) AS total_month,
+        COALESCE(bt.total_all, 0) AS total_all,
+        bt.updated_at AS bet_totals_updated_at
+      FROM user_profiles up
+      LEFT JOIN bet_totals bt ON bt.username = up.username
+        AND bt.id = (SELECT MAX(x.id) FROM bet_totals x WHERE x.username = up.username)
+      WHERE ${scopeWhere}
+      ORDER BY ${orderSql}
+      LIMIT ? OFFSET ?`;
+
+    db.get(countSql, [], (err, countRow) => {
+      if (err) return res.status(500).json({ error: err.message });
+      const total = countRow?.total || 0;
+      db.all(listSql, [limit, offset], (err2, rows) => {
+        if (err2) return res.status(500).json({ error: err2.message });
+        res.json({
+          description:
+            'LC79 + Đang Chơi/Hết Tiền; total_day và các cột bet từ bet_totals (0 nếu chưa có dòng).',
+          page,
+          limit,
+          sort: sortKey === 'username' ? 'username' : 'total_day',
+          totalItems: total,
+          totalPages: Math.ceil(total / limit) || 1,
+          data: rows,
+        });
+      });
+    });
+  } catch (e) {
+    res.status(500).json({ error: String(e?.message || e) });
+  }
+}
+
+app.get('/api/users/lc79-playing-or-out', handleLc79PlayingOrOutList);
+app.get('/api/lc79/playing-or-out', handleLc79PlayingOrOutList);
 
 // ------------------- Lấy 1 user theo username -------------------
 app.get('/api/users/:username', (req, res) => {
+  if (req.params.username === 'lc79-playing-or-out') {
+    return handleLc79PlayingOrOutList(req, res);
+  }
   const sql = `SELECT * FROM user_profiles WHERE username = ?`;
   db.get(sql, [req.params.username], (err, row) => {
     if (err) {
@@ -2421,17 +2512,74 @@ app.put('/api/accounts/:username', (req, res) => {
 });
 
 // ------------------- Xóa tài khoản theo username -------------------
+// Đồng thời xoá user_profiles + bet_totals (cùng username). Transaction: lỗi giữa chừng → rollback hết.
 app.delete('/api/accounts/:username', (req, res) => {
-  const sql = `DELETE FROM accounts WHERE username = ?`;
-  db.run(sql, [req.params.username], function (err) {
-    if (err) {
-      console.error("❌ Lỗi khi xoá tài khoản:", err.message);
-      return res.status(500).json({ error: "Không thể xoá tài khoản" });
-    }
-    if (this.changes === 0) {
-      return res.status(404).json({ error: "Không tìm thấy tài khoản" });
-    }
-    res.json({ success: true });
+  const username = req.params.username;
+
+  db.serialize(() => {
+    db.run('BEGIN TRANSACTION', (beginErr) => {
+      if (beginErr) {
+        console.error('❌ BEGIN TRANSACTION:', beginErr.message);
+        return res.status(500).json({ error: 'Không thể bắt đầu transaction' });
+      }
+
+      db.run(`DELETE FROM accounts WHERE username = ?`, [username], function (err) {
+        if (err) {
+          return db.run('ROLLBACK', () => {
+            console.error('❌ Lỗi khi xoá accounts:', err.message);
+            res.status(500).json({ error: 'Không thể xoá tài khoản', detail: err.message });
+          });
+        }
+        if (this.changes === 0) {
+          return db.run('ROLLBACK', () => {
+            res.status(404).json({ error: 'Không tìm thấy tài khoản' });
+          });
+        }
+
+        const deletedAccounts = this.changes;
+
+        db.run(`DELETE FROM user_profiles WHERE username = ?`, [username], function (err2) {
+          if (err2) {
+            return db.run('ROLLBACK', () => {
+              console.error('❌ Lỗi khi xoá user_profiles:', err2.message);
+              res.status(500).json({
+                error: 'Lỗi khi xoá user_profiles (accounts đã rollback)',
+                detail: err2.message,
+              });
+            });
+          }
+          const deletedProfiles = this.changes;
+
+          db.run(`DELETE FROM bet_totals WHERE username = ?`, [username], function (err3) {
+            if (err3) {
+              return db.run('ROLLBACK', () => {
+                console.error('❌ Lỗi khi xoá bet_totals:', err3.message);
+                res.status(500).json({
+                  error: 'Lỗi khi xoá bet_totals (đã rollback)',
+                  detail: err3.message,
+                });
+              });
+            }
+            const deletedBetTotals = this.changes;
+
+            db.run('COMMIT', (commitErr) => {
+              if (commitErr) {
+                console.error('❌ COMMIT:', commitErr.message);
+                return res.status(500).json({ error: 'Lỗi commit', detail: commitErr.message });
+              }
+              res.json({
+                success: true,
+                deleted: {
+                  accounts: deletedAccounts,
+                  user_profiles: deletedProfiles,
+                  bet_totals: deletedBetTotals,
+                },
+              });
+            });
+          });
+        });
+      });
+    });
   });
 });
 // ------------------- Gán thiết bị cho tài khoản -------------------
@@ -3452,27 +3600,84 @@ app.post('/api/bet-totals/increment', async (req, res) => {
 });
 
 // Đường dẫn cụ thể (/daily, /top) đăng ký TRƯỚC GET /api/bet-totals để luôn khớp đúng (Express 5 / path-to-regexp).
-// GET /api/bet-totals/daily?page=1&limit=10000 — check tổng cược ngày (total_day), sort giảm dần, tie-break username
+// GET /api/bet-totals/daily — mặc định: LC79 + Đang Chơi/Hết Tiền + total_day>0
+//   include_zero_day=1|true: bỏ điều kiện total_day>0 (vẫn LC79 + 2 trạng thái; không dùng kèm raw=1).
+//   raw=1: toàn bộ bet_totals (hành vi cũ, có thể lẫn nick ngoài CMS).
+//   profile_status=Đang Chơi | Hết Tiền: thu hẹp 1 trạng thái (chỉ khi không raw).
+function _betTotalsProfileStatusWhere(req) {
+  const ps = String(req.query.profile_status || '').trim();
+  if (!ps) return { ok: true, sql: "up.status IN ('Đang Chơi', 'Hết Tiền')" };
+  if (ps === 'Đang Chơi' || ps === 'Hết Tiền') return { ok: true, sql: `up.status = '${ps}'` };
+  return { ok: false, error: 'profile_status chỉ nhận Đang Chơi hoặc Hết Tiền' };
+}
+
 app.get('/api/bet-totals/daily', async (req, res) => {
   try {
     const page = Math.max(1, parseInt(req.query.page) || 1);
     const limit = Math.max(1, parseInt(req.query.limit) || 10000);
     const offset = (page - 1) * limit;
     await refreshBetTotalsAll();
-    db.get(`SELECT COUNT(*) as total FROM bet_totals`, [], (err, countRow) => {
+    const rawDaily = req.query.raw === '1' || req.query.raw === 'true';
+
+    if (rawDaily) {
+      if (req.query.include_zero_day === '1' || req.query.include_zero_day === 'true') {
+        return res.status(400).json({ error: 'include_zero_day không dùng kèm raw=1' });
+      }
+      if (String(req.query.profile_status || '').trim()) {
+        return res.status(400).json({ error: 'profile_status không dùng kèm raw=1' });
+      }
+      db.get(`SELECT COUNT(*) as total FROM bet_totals`, [], (err, countRow) => {
+        if (err) return res.status(500).json({ error: err.message });
+        const total = countRow?.total || 0;
+        db.all(
+          `SELECT username, total_day, day_start, total_week, total_month, total_all, updated_at
+           FROM bet_totals
+           ORDER BY total_day DESC, username ASC
+           LIMIT ? OFFSET ?`,
+          [limit, offset],
+          (err2, rows) => {
+            if (err2) return res.status(500).json({ error: err2.message });
+            res.json({
+              metric: 'total_day',
+              description: 'raw=1: mọi dòng bet_totals (tương thích cũ)',
+              page,
+              limit,
+              totalItems: total,
+              totalPages: Math.ceil(total / limit) || 1,
+              data: rows,
+            });
+          }
+        );
+      });
+      return;
+    }
+
+    const st = _betTotalsProfileStatusWhere(req);
+    if (!st.ok) return res.status(400).json({ error: st.error });
+    const includeZeroDay = req.query.include_zero_day === '1' || req.query.include_zero_day === 'true';
+    const dayPositiveSql = includeZeroDay ? '' : ' AND bt.total_day > 0';
+    const dailyFilter = `INNER JOIN user_profiles up ON up.username = bt.username
+         INNER JOIN accounts ac ON ac.username = bt.username AND ac.game = 'LC79'
+         WHERE ${st.sql}${dayPositiveSql}`;
+    db.get(
+      `SELECT COUNT(*) as total FROM bet_totals bt ${dailyFilter}`,
+      [],
+      (err, countRow) => {
       if (err) return res.status(500).json({ error: err.message });
       const total = countRow?.total || 0;
       db.all(
-        `SELECT username, total_day, day_start, total_week, total_month, total_all, updated_at
-         FROM bet_totals
-         ORDER BY total_day DESC, username ASC
+        `SELECT bt.username, bt.total_day, bt.day_start, bt.total_week, bt.total_month, bt.total_all, bt.updated_at
+         FROM bet_totals bt
+         ${dailyFilter}
+         ORDER BY bt.total_day DESC, bt.username ASC
          LIMIT ? OFFSET ?`,
         [limit, offset],
         (err2, rows) => {
           if (err2) return res.status(500).json({ error: err2.message });
           res.json({
             metric: 'total_day',
-            description: 'Tổng cược trong ngày trên CMS (bet_totals), đã refresh theo mốc VN',
+            description:
+              'Mặc định: LC79 + Đang Chơi/Hết Tiền + total_day>0. include_zero_day=1 → bỏ total_day>0. raw=1 → không lọc.',
             page,
             limit,
             totalItems: total,
@@ -3510,7 +3715,9 @@ app.get('/api/bet-totals/top', async (req, res) => {
 });
 
 // GET /api/bet-totals?page=1&limit=10000 — danh sách tổng cược; mặc định sort=total_day DESC (tổng cược ngày).
-// Dùng cho refresh V2: so với mốc top-bet hạng 500 → 1 user total_day < mốc, còn lại ≥ mốc.
+// Mặc định: mọi dòng bet_totals (tương thích cũ).
+// managed_scope=1: chỉ LC79 + user_profiles; profile_status=Đang Chơi|Hết Tiền (tùy chọn, mặc định cả hai).
+//   Khi sort=total_day và managed_scope=1: thêm total_day > 0 (trừ include_zero_day=1|true).
 // sort: total_day | total_all | total_week | total_month (tie-break username ASC).
 app.get('/api/bet-totals', async (req, res) => {
   try {
@@ -3539,6 +3746,49 @@ app.get('/api/bet-totals', async (req, res) => {
 
     await refreshBetTotalsAll(); // ✅ reset theo VN nếu đổi ngày/tuần/tháng mà chưa có bet
 
+    const managedScope = req.query.managed_scope === '1' || req.query.managed_scope === 'true';
+    if (String(req.query.profile_status || '').trim() && !managedScope) {
+      return res.status(400).json({ error: 'profile_status chỉ dùng kèm managed_scope=1' });
+    }
+    const st = _betTotalsProfileStatusWhere(req);
+    if (!st.ok) return res.status(400).json({ error: st.error });
+    const includeZeroDayBt = req.query.include_zero_day === '1' || req.query.include_zero_day === 'true';
+    const dayPositiveOnly =
+      orderCol === 'total_day' && !includeZeroDayBt ? ' AND bt.total_day > 0' : '';
+
+    if (managedScope) {
+      const betTotalsScope = `INNER JOIN user_profiles up ON up.username = bt.username
+         INNER JOIN accounts ac ON ac.username = bt.username AND ac.game = 'LC79'
+         WHERE ${st.sql}`;
+      db.get(
+        `SELECT COUNT(*) as total FROM bet_totals bt ${betTotalsScope}${dayPositiveOnly}`,
+        [],
+        (err, countRow) => {
+        if (err) return res.status(500).json({ error: err.message });
+        const total = countRow?.total || 0;
+        db.all(
+          `SELECT bt.* FROM bet_totals bt
+           ${betTotalsScope}${dayPositiveOnly}
+           ORDER BY bt.${orderCol} DESC, bt.username ASC
+           LIMIT ? OFFSET ?`,
+          [limit, offset],
+          (err2, rows) => {
+            if (err2) return res.status(500).json({ error: err2.message });
+            res.json({
+              page,
+              limit,
+              sort: orderCol,
+              managed_scope: true,
+              totalItems: total,
+              totalPages: Math.ceil(total / limit),
+              data: rows,
+            });
+          }
+        );
+      });
+      return;
+    }
+
     db.get(`SELECT COUNT(*) as total FROM bet_totals`, [], (err, countRow) => {
       if (err) return res.status(500).json({ error: err.message });
       const total = countRow?.total || 0;
@@ -3549,7 +3799,7 @@ app.get('/api/bet-totals', async (req, res) => {
         [limit, offset],
         (err2, rows) => {
           if (err2) return res.status(500).json({ error: err2.message });
-          res.json({ page, limit, sort: orderCol, totalItems: total, totalPages: Math.ceil(total/limit), data: rows });
+          res.json({ page, limit, sort: orderCol, totalItems: total, totalPages: Math.ceil(total / limit), data: rows });
         }
       );
     });
