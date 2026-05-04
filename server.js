@@ -379,6 +379,7 @@ function classifyGiftTitle(title) {
   if (t.includes('Xin chúc mừng! Bạn đã xuất sắc xếp hạng')) return 'Tóp';
   if (t.includes('Xin chúc mừng! Bạn đã xuất sắc đạt chuỗi')) return 'Chuỗi';
   if (t.includes('Bạn đã đạt chuỗi')) return 'Chuỗi';
+  if (t.includes('Hoàn thua tuần LC79')) return 'Hoàn thua tuần LC79';
   if (t.includes('Hoàn thua ngày LC79')) return 'Hoàn thua ngày LC79';
   if (t.includes('Lộc may mắn LC79')) return 'Lộc may mắn LC79';
   if (/hoàn\s*cược\s*tháng|hoan\s*cược\s*tháng/i.test(t)) return 'Hoàn cược tháng';
@@ -396,6 +397,7 @@ const GIFT_BOX_DAILY_STAT_COLUMNS = [
   { key: 'top', label: 'Tóp', dbValue: 'Tóp' },
   { key: 'loc_may_man', label: 'Lộc May Mắn', dbValue: 'Lộc may mắn LC79' },
   { key: 'hoan_thua_ngay', label: 'Hoàn Thua Ngày', dbValue: 'Hoàn thua ngày LC79' },
+  { key: 'hoan_thua_tuan', label: 'Hoàn Thua Tuần', dbValue: 'Hoàn thua tuần LC79' },
   { key: 'hoan_cuoc_thang', label: 'Hoàn Cược Tháng', dbValue: 'Hoàn cược tháng' },
   { key: 'khac', label: 'Khác', dbValue: 'Khác' },
 ];
