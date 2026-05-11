@@ -135,9 +135,10 @@
         <th>NickName</th>
         <th>Balance</th>
         <th>Tổng Cược Ngày</th>
-        <th>Tổng Cược Tuần</th>
-        <th>Tổng Cược Tháng</th>
+        <th title="Trước /: tổng cược tuần (CMS). Sau /: cược hợp lệ (weekJustifiedBetAmount).">Tổng Cược Tuần</th>
+        <th title="Trước /: tổng cược tháng (CMS). Sau /: cược hợp lệ (month_justified_bet_amount).">Tổng Cược Tháng</th>
         <th>Tổng Cược</th>
+        <th class="nowrap" title="VIP / trunc((mốc X10 − tổng X10) / 1000). Ví dụ 872/15353">VIP / CT</th>
         <th>Tổng Nạp</th>
         <th>Tổng Rút</th>
         <th>Tỷ lệ</th>
@@ -165,11 +166,34 @@ function refreshData() {
   });
 }
 const fmt = n => (Number(n||0)).toLocaleString('vi-VN');
+/** Bỏ 3 chữ số cuối (chia 1000, trunc), hiển thị có phân cách kiểu VN: 10_000_000 → 10.000 */
+function fmtDropLast3(n) {
+  const x = Number(n || 0);
+  if (!Number.isFinite(x)) return '0';
+  const v = Math.trunc(x / 1000);
+  return v.toLocaleString('vi-VN');
+}
+/** Một ô: tổng cược hiện tại / cược hợp lệ (nguồn khác), ví dụ 1040/520 */
+function betPairCell(current, justified) {
+  const left = fmtDropLast3(current);
+  const right = fmtDropLast3(justified);
+  return `<span>${escapeHtml(left)}</span><span class="muted">/</span><span>${escapeHtml(right)}</span>`;
+}
 const escapeHtml = (s) => String(s == null ? '' : s)
   .replace(/&/g, '&amp;')
   .replace(/</g, '&lt;')
   .replace(/>/g, '&gt;')
   .replace(/"/g, '&quot;');
+/** Nhiệm vụ (bảng user_vip_x10_params): VIP / trunc((mốc X10 − tổng X10) / 1000) — ví dụ 872/15353 */
+function nhiemVuVipCtCell(p) {
+  if (!p) return '<span class="muted">---</span>';
+  const vip = Math.trunc(Number(p.vip) || 0);
+  const total = Number(p.x10_total_bet) || 0;
+  const next = Number(p.x10_next_reward_total_bet) || 0;
+  const diff = next - total;
+  const ctDiv1k = Math.trunc(diff / 1000);
+  return `<span class="nowrap">${escapeHtml(String(vip))}<span class="muted">/</span>${escapeHtml(String(ctDiv1k))}</span>`;
+}
 // API Python chạy port 8080 trên cùng máy: dùng hostname hiện tại để truy cập từ internet
 const api8080Base = `${window.location.protocol}//${window.location.hostname}:8080`;
 
@@ -270,6 +294,44 @@ async function loadAccountsWithStats() {
       };
     });
 
+    let rewardPeriodMap = {};
+    try {
+      const resRw = await fetch('/api/user-reward-periods?page=1&limit=10000');
+      if (resRw.ok) {
+        const rwResp = await resRw.json();
+        const rwRows = Array.isArray(rwResp.data) ? rwResp.data : [];
+        rwRows.forEach((row) => {
+          const un = normalizeUsername(row.username);
+          if (!un) return;
+          rewardPeriodMap[un] = {
+            weekJustified: Number(row.week_justified_bet_amount ?? row.weekJustifiedBetAmount ?? 0),
+            monthJustified: Number(row.month_justified_bet_amount ?? row.monthJustifiedBetAmount ?? 0)
+          };
+        });
+      }
+    } catch (e) {
+      console.warn('Không tải được user-reward-periods:', e);
+      rewardPeriodMap = {};
+    }
+
+    /** Nhiệm vụ (user_vip_x10_params): VIP + còn thiếu (mốc − tổng) ÷ 1000 phần nguyên — hiển thị vip/số */
+    let nhiemVuMap = {};
+    try {
+      const resNv = await fetch('/api/vip-x10-params');
+      if (resNv.ok) {
+        const nvResp = await resNv.json();
+        const nvRows = Array.isArray(nvResp.data) ? nvResp.data : [];
+        nvRows.forEach((row) => {
+          const un = normalizeUsername(row.username);
+          if (!un) return;
+          nhiemVuMap[un] = row;
+        });
+      }
+    } catch (e) {
+      console.warn('Không tải được vip-x10-params:', e);
+      nhiemVuMap = {};
+    }
+
     userMap = {};
     users.forEach(u => {
       const uname = normalizeUsername(u.username);
@@ -324,6 +386,8 @@ async function loadAccountsWithStats() {
       acc.totalBetDay = betMap[uname]?.totalDay || 0;
       acc.totalBetWeek = betMap[uname]?.totalWeek || 0;
       acc.totalBetMonth = betMap[uname]?.totalMonth || 0;
+      acc.weekJustifiedBetAmount = rewardPeriodMap[uname]?.weekJustified || 0;
+      acc.monthJustifiedBetAmount = rewardPeriodMap[uname]?.monthJustified || 0;
       acc.totalBetAll = betMap[uname]?.total_all || betMap[uname]?.totalAll || 0;
       acc.todayDeposit = todayDepositMap[uname] || 0;
       acc.todayWithdraw = todayWithdrawMap[uname] || 0;
@@ -332,6 +396,7 @@ async function loadAccountsWithStats() {
       // ✅ Tổng nạp/rút theo API GROUP BY (KHÔNG còn phụ thuộc 100 bản ghi)
       acc.totalDeposit = totalsByUser[uname]?.deposit || 0;
       acc.totalWithdraw = totalsByUser[uname]?.withdraw || 0;
+      acc.nhiemVuParams = nhiemVuMap[uname] || null;
     });
 
     renderTable(accounts || []);
@@ -720,9 +785,10 @@ function renderTable(rows) {
         <td>${escapeHtml(p.nickname || uname || '')}</td>
         <td class="right">${fmt(p.balance)}</td>
         <td class="right">${fmt(r.totalBetDay || 0)}</td>
-        <td class="right">${fmt(r.totalBetWeek || 0)}</td>
-        <td class="right">${fmt(r.totalBetMonth || 0)}</td>
+        <td class="right nowrap">${betPairCell(r.totalBetWeek || 0, r.weekJustifiedBetAmount || 0)}</td>
+        <td class="right nowrap">${betPairCell(r.totalBetMonth || 0, r.monthJustifiedBetAmount || 0)}</td>
         <td class="right">${fmt(r.totalBetAll || 0)}</td>
+        <td class="right">${nhiemVuVipCtCell(r.nhiemVuParams)}</td>
         <td class="right">${fmt(r.totalDeposit)}</td>
         <td class="right">${fmt(r.totalWithdraw)}</td>
         <td class="right ${(Number(r.totalDeposit || 0) > 0 && ((Number(r.totalWithdraw || 0) + Number(p.balance || 0)) / Number(r.totalDeposit || 1)) > 1.50) ? 'ratio-high' : ''}">

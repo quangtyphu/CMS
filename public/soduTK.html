@@ -92,6 +92,7 @@
     <table id="deviceTable">
       <thead>
         <tr>
+          <th>STT</th>
           <th>Device</th>
           <th>Số dư</th>
           <th>Ngân hàng</th>        <!-- 🆕 -->
@@ -123,7 +124,7 @@ function renderDevices(list) {
   tbody.innerHTML = "";
   let totalBalance = 0; // 🆕 tạo biến tổng
 
-  list.forEach(item => {
+  list.forEach((item, idx) => {
     totalBalance += item.balance || 0; // 🆕 cộng dồn
     const deviceValue = item.device || "";
     const balanceValue = item.balance || 0;
@@ -134,6 +135,7 @@ function renderDevices(list) {
     
     tbody.innerHTML += `
       <tr>
+        <td>${idx + 1}</td>
         <td>${deviceValue || "---"}</td>
         <td>
           <span class="editable-balance ${balanceValue >= 3000000 ? 'high-balance' : ''}" data-device="${item.device}" data-field="balance">

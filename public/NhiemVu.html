@@ -1,0 +1,275 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Nhiệm Vụ</title>
+  <!-- Không dùng style.css của CMS (body flex) — full width giống QuanLyLC79_All.html trong iframe -->
+  <style>
+    :root { --blue: #3498db; --green: #2ecc71; --red: #e74c3c; --gray: #f7f8fa; }
+    html, body { width: 100%; margin: 0; box-sizing: border-box; }
+    body {
+      font-family: Arial, sans-serif;
+      background: var(--gray);
+      padding: 20px;
+      min-height: 100%;
+    }
+    .wrap { width: 100%; max-width: 100%; box-sizing: border-box; }
+    h2 { margin: 0 0 8px; color: #2c3e50; }
+    .toolbar {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: space-between;
+      align-items: center;
+      gap: 12px;
+      margin: 12px 0;
+      width: 100%;
+    }
+    .toolbar input[type="text"] {
+      flex: 1 1 220px;
+      min-width: 160px;
+      max-width: 400px;
+      padding: 8px 10px;
+      border: 1px solid #ccc;
+      border-radius: 4px;
+      font-size: 14px;
+    }
+    .muted { color: #666; font-size: 14px; margin: 0 0 12px; }
+    #tbl {
+      width: 100%;
+      min-width: 100%;
+      border-collapse: collapse;
+      background: #fff;
+      border-radius: 10px;
+      overflow: hidden;
+      table-layout: auto;
+    }
+    #tbl th, #tbl td { border: 1px solid #eee; padding: 8px; text-align: center; font-size: 14px; }
+    #tbl thead th { background: var(--blue); color: #fff; position: sticky; top: 0; z-index: 1; }
+    #tbl thead tr.sub th { background: #5dade2; font-weight: normal; font-size: 13px; }
+    #tbl tbody tr:nth-child(even) { background: #f9f9f9; }
+    .num { text-align: right; font-variant-numeric: tabular-nums; }
+    .actions { white-space: nowrap; }
+    .btn, #btnRefresh {
+      padding: 8px 16px;
+      border: none;
+      border-radius: 6px;
+      background: var(--blue);
+      color: #fff;
+      cursor: pointer;
+      font-size: 14px;
+    }
+    .btn:hover, #btnRefresh:hover { background: #2980b9; }
+    .btn-sm { padding: 4px 10px; margin: 0 2px; font-size: 12px; border-radius: 4px; }
+    .btn-del { background: var(--red); }
+    .btn-del:hover { background: #c0392b; }
+    .err { color: #c0392b; margin: 8px 0; }
+    dialog { border: none; border-radius: 8px; padding: 0; box-shadow: 0 8px 24px rgba(0,0,0,.2); }
+    dialog::backdrop { background: rgba(0,0,0,.35); }
+    .dlg-inner { padding: 20px; min-width: 320px; }
+    .dlg-inner h3 { margin-top: 0; }
+    .dlg-row { margin-bottom: 10px; }
+    .dlg-row label { display: block; font-size: 13px; margin-bottom: 4px; color: #555; }
+    .dlg-row input, .dlg-row select { width: 100%; padding: 8px; box-sizing: border-box; border: 1px solid #ccc; border-radius: 4px; }
+    .dlg-actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 16px; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <h2>Nhiệm Vụ</h2>
+    <p class="muted">Tổng cược hiện tại, mốc nhận thưởng tiếp theo, và phần còn thiếu (mốc − tổng).</p>
+
+    <div class="toolbar">
+      <input type="text" id="filterUser" placeholder="Lọc username…" aria-label="Lọc username">
+      <button type="button" id="btnRefresh">🔄 Tải lại</button>
+    </div>
+    <div id="msg" class="err" style="display:none;"></div>
+
+    <table id="tbl">
+      <thead>
+        <tr>
+          <th rowspan="2">STT</th>
+          <th rowspan="2">Username</th>
+          <th rowspan="2">Tân thủ</th>
+          <th rowspan="2">VIP</th>
+          <th colspan="3">X10</th>
+          <th rowspan="2" class="actions">Thao tác</th>
+        </tr>
+        <tr class="sub">
+          <th>Tổng cược</th>
+          <th>Mốc tiếp theo</th>
+          <th>Còn thiếu</th>
+        </tr>
+      </thead>
+      <tbody></tbody>
+    </table>
+  </div>
+
+  <dialog id="dlgEdit">
+    <div class="dlg-inner">
+      <h3>Sửa — <span id="dlgUsername"></span></h3>
+      <div class="dlg-row">
+        <label>Tân thủ (0–3)</label>
+        <select id="edTask">
+          <option value="0">0 — chưa sync tân thủ</option>
+          <option value="1">1</option>
+          <option value="2">2</option>
+          <option value="3">3</option>
+        </select>
+      </div>
+      <div class="dlg-row">
+        <label>VIP (≥ 0)</label>
+        <input type="number" id="edVip" min="0" step="1">
+      </div>
+      <div class="dlg-row">
+        <label>Tổng cược X10</label>
+        <input type="number" id="edX10Total" min="0" step="1">
+      </div>
+      <div class="dlg-row">
+        <label>Mốc tiếp theo</label>
+        <input type="number" id="edX10Next" min="0" step="1">
+      </div>
+      <div class="dlg-actions">
+        <button type="button" class="btn" id="dlgSave">Lưu</button>
+        <button type="button" class="btn" style="background:#95a5a6" id="dlgCancel">Đóng</button>
+      </div>
+    </div>
+  </dialog>
+
+  <script>
+    const fmt = (n) => (Number(n) || 0).toLocaleString('vi-VN');
+    const esc = (s) => String(s == null ? '' : s)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;');
+
+    let rows = [];
+
+    function showErr(t) {
+      const el = document.getElementById('msg');
+      el.style.display = t ? 'block' : 'none';
+      el.textContent = t || '';
+    }
+
+    async function loadData() {
+      showErr('');
+      try {
+        const res = await fetch('/api/vip-x10-params');
+        const j = await res.json();
+        if (!res.ok) throw new Error(j.error || res.statusText);
+        rows = Array.isArray(j.data) ? j.data : [];
+        render();
+      } catch (e) {
+        showErr('Lỗi tải dữ liệu: ' + e.message);
+        rows = [];
+        render();
+      }
+    }
+
+    function render() {
+      const q = document.getElementById('filterUser').value.trim().toLowerCase();
+      const filtered = q
+        ? rows.filter((r) => String(r.username || '').toLowerCase().includes(q))
+        : rows;
+
+      const tbody = document.querySelector('#tbl tbody');
+      tbody.innerHTML = '';
+
+      filtered.forEach((r, i) => {
+        const total = Number(r.x10_total_bet) || 0;
+        const next = Number(r.x10_next_reward_total_bet) || 0;
+        const diff = next - total;
+        const tr = document.createElement('tr');
+        const uEnc = encodeURIComponent(r.username || '');
+        tr.innerHTML = `
+          <td>${i + 1}</td>
+          <td>${esc(r.username)}</td>
+          <td>${esc(r.onboarding_task)}</td>
+          <td class="num">${fmt(r.vip)}</td>
+          <td class="num">${fmt(total)}</td>
+          <td class="num">${fmt(next)}</td>
+          <td class="num">${fmt(diff)}</td>
+          <td class="actions">
+            <button type="button" class="btn btn-sm btn-edit" data-u="${uEnc}">Sửa</button>
+            <button type="button" class="btn btn-sm btn-del" data-u="${uEnc}">Xóa</button>
+          </td>
+        `;
+        tbody.appendChild(tr);
+      });
+
+      document.querySelectorAll('.btn-edit').forEach((btn) => {
+        btn.addEventListener('click', () => openEdit(decodeURIComponent(btn.getAttribute('data-u'))));
+      });
+      document.querySelectorAll('.btn-del').forEach((btn) => {
+        btn.addEventListener('click', () => delRow(decodeURIComponent(btn.getAttribute('data-u'))));
+      });
+    }
+
+    function openEdit(username) {
+      const r = rows.find((x) => x.username === username);
+      if (!r) return;
+      document.getElementById('dlgUsername').textContent = username;
+      document.getElementById('edTask').value = String(r.onboarding_task ?? 0);
+      document.getElementById('edVip').value = Number(r.vip) || 0;
+      document.getElementById('edX10Total').value = Number(r.x10_total_bet) || 0;
+      document.getElementById('edX10Next').value = Number(r.x10_next_reward_total_bet) || 0;
+      document.getElementById('dlgEdit').dataset.username = username;
+      document.getElementById('dlgEdit').showModal();
+    }
+
+    document.getElementById('dlgCancel').addEventListener('click', () => {
+      document.getElementById('dlgEdit').close();
+    });
+
+    document.getElementById('dlgSave').addEventListener('click', async () => {
+      const dlg = document.getElementById('dlgEdit');
+      const username = dlg.dataset.username;
+      const body = {
+        onboarding_task: parseInt(document.getElementById('edTask').value, 10),
+        vip: parseInt(document.getElementById('edVip').value, 10),
+        x10_total_bet: parseInt(document.getElementById('edX10Total').value, 10),
+        x10_next_reward_total_bet: parseInt(document.getElementById('edX10Next').value, 10),
+      };
+      if (![0, 1, 2, 3].includes(body.onboarding_task)) {
+        alert('Tân thủ phải là 0, 1, 2 hoặc 3');
+        return;
+      }
+      if (body.vip < 0 || body.x10_total_bet < 0 || body.x10_next_reward_total_bet < 0) {
+        alert('VIP và X10 phải >= 0');
+        return;
+      }
+      try {
+        const res = await fetch('/api/vip-x10-params/' + encodeURIComponent(username), {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+        });
+        const j = await res.json();
+        if (!res.ok) throw new Error(j.error || res.statusText);
+        dlg.close();
+        await loadData();
+      } catch (e) {
+        alert('Lỗi: ' + e.message);
+      }
+    });
+
+    async function delRow(username) {
+      if (!confirm('Xóa nhiệm vụ cho ' + username + '?')) return;
+      try {
+        const res = await fetch('/api/vip-x10-params/' + encodeURIComponent(username), { method: 'DELETE' });
+        const j = await res.json();
+        if (!res.ok) throw new Error(j.error || res.statusText);
+        await loadData();
+      } catch (e) {
+        alert('Lỗi: ' + e.message);
+      }
+    }
+
+    document.getElementById('btnRefresh').addEventListener('click', loadData);
+    document.getElementById('filterUser').addEventListener('input', render);
+
+    loadData();
+  </script>
+</body>
+</html>

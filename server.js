@@ -191,7 +191,23 @@ db.run(`CREATE TABLE IF NOT EXISTS bet_totals (
   month_start TEXT,
 
   updated_at TEXT DEFAULT (datetime('now'))
-)`); 
+)`);
+// Cược hợp lệ & phần thưởng hiện tại theo tuần/tháng (một dòng / user, cùng file game_data.db)
+db.run(`CREATE TABLE IF NOT EXISTS user_reward_periods (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  username TEXT UNIQUE NOT NULL,
+  week_justified_bet_amount INTEGER DEFAULT 0,
+  week_current_reward INTEGER DEFAULT 0,
+  month_justified_bet_amount INTEGER DEFAULT 0,
+  month_current_reward INTEGER DEFAULT 0,
+  updated_at TEXT DEFAULT (datetime('now'))
+)`, (err) => {
+  if (err) console.error("❌ Lỗi khi tạo bảng user_reward_periods:", err.message);
+  else console.log("✅ Bảng user_reward_periods đã sẵn sàng.");
+});
+// DB đã tạo bản cũ có week_start/month_start: gỡ cột (SQLite 3.35+)
+db.run(`ALTER TABLE user_reward_periods DROP COLUMN week_start`, () => {});
+db.run(`ALTER TABLE user_reward_periods DROP COLUMN month_start`, () => {});
 //  Streaks
 db.run(`
   CREATE TABLE IF NOT EXISTS streaks (
@@ -222,6 +238,146 @@ db.run(`CREATE TABLE IF NOT EXISTS user_profiles (
   status TEXT DEFAULT 'Mới Tạo',
   createdAt DATETIME DEFAULT CURRENT_TIMESTAMP
 )`);
+
+// Tân thủ / VIP / X10 (tham số truyền vào)
+db.run(`
+  CREATE TABLE IF NOT EXISTS user_vip_x10_params (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    username TEXT UNIQUE NOT NULL,
+
+    -- Nhiệm vụ tân thủ: 0 = chưa sync từ game; 1–3 = mốc cao nhất đã claimed (Python)
+    onboarding_task INTEGER NOT NULL CHECK(onboarding_task IN (0, 1, 2, 3)),
+
+    -- VIP: >= 0
+    vip INTEGER NOT NULL DEFAULT 0 CHECK(vip >= 0),
+
+    -- X10: mốc nhận thưởng tiếp theo (tổng cược cần đạt)
+    x10_total_bet INTEGER NOT NULL DEFAULT 0 CHECK(x10_total_bet >= 0),
+    x10_next_reward_total_bet INTEGER NOT NULL DEFAULT 0 CHECK(x10_next_reward_total_bet >= 0),
+
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT DEFAULT (datetime('now'))
+  )
+`);
+
+// Migration: đổi x10_missing -> x10_next_reward_total_bet + nới lỏng VIP nếu DB cũ còn CHECK.
+db.get(
+  `SELECT sql FROM sqlite_master WHERE type='table' AND name='user_vip_x10_params'`,
+  async (err, row) => {
+    if (err) return;
+
+    const def = String(row?.sql || '');
+    const needsRelaxVip = /vip\s*<=\s*10000/i.test(def);
+
+    const runP = (sql, params = []) =>
+      new Promise((resolve, reject) => {
+        db.run(sql, params, function (e) {
+          if (e) reject(e);
+          else resolve(this);
+        });
+      });
+
+    const allP = (sql, params = []) =>
+      new Promise((resolve, reject) => {
+        db.all(sql, params, (e, rows) => {
+          if (e) reject(e);
+          else resolve(rows || []);
+        });
+      });
+
+    try {
+      const cols = await allP(`PRAGMA table_info(user_vip_x10_params)`);
+      const colNames = (cols || []).map((c) => c.name);
+      const hasX10Missing = colNames.includes('x10_missing');
+      const hasX10Next = colNames.includes('x10_next_reward_total_bet');
+
+      // Nếu không cần rename và không cần relax => thoát
+      if (!needsRelaxVip && !hasX10Missing) return;
+
+      // Nếu DB cũ đã có cột mới rồi, chỉ cần rebuild để relax vip (nếu cần)
+      // Nếu DB cũ có x10_missing thì convert: next = x10_total_bet + x10_missing
+      await runP(`DROP TABLE IF EXISTS user_vip_x10_params_new`);
+      await runP(`
+        CREATE TABLE user_vip_x10_params_new (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          username TEXT UNIQUE NOT NULL,
+          onboarding_task INTEGER NOT NULL CHECK(onboarding_task IN (0, 1, 2, 3)),
+          vip INTEGER NOT NULL DEFAULT 0 CHECK(vip >= 0),
+          x10_total_bet INTEGER NOT NULL DEFAULT 0 CHECK(x10_total_bet >= 0),
+          x10_next_reward_total_bet INTEGER NOT NULL DEFAULT 0 CHECK(x10_next_reward_total_bet >= 0),
+          created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+          updated_at TEXT DEFAULT (datetime('now'))
+        )
+      `);
+
+      const nextExpr = hasX10Missing
+        ? `(x10_total_bet + COALESCE(x10_missing, 0))`
+        : (hasX10Next ? `COALESCE(x10_next_reward_total_bet, 0)` : `0`);
+
+      await runP(
+        `
+          INSERT INTO user_vip_x10_params_new
+            (id, username, onboarding_task, vip, x10_total_bet, x10_next_reward_total_bet, created_at, updated_at)
+          SELECT
+            id, username, onboarding_task, vip, x10_total_bet, ${nextExpr} as x10_next_reward_total_bet, created_at, updated_at
+          FROM user_vip_x10_params
+        `
+      );
+
+      await runP(`DROP TABLE user_vip_x10_params`);
+      await runP(`ALTER TABLE user_vip_x10_params_new RENAME TO user_vip_x10_params`);
+      console.log('✅ Migrated user_vip_x10_params: x10_next_reward_total_bet enabled');
+    } catch (e2) {
+      console.error('❌ Migration user_vip_x10_params failed:', e2?.message || e2);
+    }
+  }
+);
+
+// Migration: onboarding_task cho phép 0 (chưa sync tân thủ). Tránh PUT chỉ vip/x10 tạo dòng mới với onboarding_task=1 nhầm "đã claim mốc 1".
+db.get(
+  `SELECT sql FROM sqlite_master WHERE type='table' AND name='user_vip_x10_params'`,
+  async (err, row) => {
+    if (err) return;
+    const def = String(row?.sql || '');
+    if (!def || /onboarding_task[^)]*IN\s*\(\s*0\s*,/i.test(def)) return;
+
+    const runP = (sql, params = []) =>
+      new Promise((resolve, reject) => {
+        db.run(sql, params, function (e) {
+          if (e) reject(e);
+          else resolve(this);
+        });
+      });
+
+    try {
+      await runP(`DROP TABLE IF EXISTS user_vip_x10_params_onb0`);
+      await runP(`
+        CREATE TABLE user_vip_x10_params_onb0 (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          username TEXT UNIQUE NOT NULL,
+          onboarding_task INTEGER NOT NULL CHECK(onboarding_task IN (0, 1, 2, 3)),
+          vip INTEGER NOT NULL DEFAULT 0 CHECK(vip >= 0),
+          x10_total_bet INTEGER NOT NULL DEFAULT 0 CHECK(x10_total_bet >= 0),
+          x10_next_reward_total_bet INTEGER NOT NULL DEFAULT 0 CHECK(x10_next_reward_total_bet >= 0),
+          created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+          updated_at TEXT DEFAULT (datetime('now'))
+        )
+      `);
+      await runP(`
+        INSERT INTO user_vip_x10_params_onb0
+          (id, username, onboarding_task, vip, x10_total_bet, x10_next_reward_total_bet, created_at, updated_at)
+        SELECT
+          id, username, onboarding_task, vip, x10_total_bet, x10_next_reward_total_bet, created_at, updated_at
+        FROM user_vip_x10_params
+      `);
+      await runP(`DROP TABLE user_vip_x10_params`);
+      await runP(`ALTER TABLE user_vip_x10_params_onb0 RENAME TO user_vip_x10_params`);
+      console.log('✅ Migrated user_vip_x10_params: onboarding_task allows 0');
+    } catch (e3) {
+      console.error('❌ Migration onboarding_task=0 failed:', e3?.message || e3);
+    }
+  }
+);
 
 // Proxy
 db.run(`CREATE TABLE IF NOT EXISTS proxies (
@@ -391,12 +547,12 @@ function classifyGiftTitle(title) {
 /** Thống kê theo ngày: nhãn cột UI ↔ gift_type trong DB */
 const GIFT_BOX_DAILY_STAT_COLUMNS = [
   { key: 'hoan_cuoc_ngay', label: 'Hoàn Cược Ngày', dbValue: 'Hoàn cược ngày' },
-  { key: 'hoan_cuoc_tuan', label: 'Hoàn Cược Tuần', dbValue: 'Hoàn cược tuần' },
   { key: 'chuoi', label: 'Chuỗi', dbValue: 'Chuỗi' },
   { key: 'top_cuoc_ngay', label: 'Tóp Cược Ngày', dbValue: 'Tóp cược ngày' },
   { key: 'top', label: 'Tóp', dbValue: 'Tóp' },
   { key: 'loc_may_man', label: 'Lộc May Mắn', dbValue: 'Lộc may mắn LC79' },
   { key: 'hoan_thua_ngay', label: 'Hoàn Thua Ngày', dbValue: 'Hoàn thua ngày LC79' },
+  { key: 'hoan_cuoc_tuan', label: 'Hoàn Cược Tuần', dbValue: 'Hoàn cược tuần' },
   { key: 'hoan_thua_tuan', label: 'Hoàn Thua Tuần', dbValue: 'Hoàn thua tuần LC79' },
   { key: 'hoan_cuoc_thang', label: 'Hoàn Cược Tháng', dbValue: 'Hoàn cược tháng' },
   { key: 'khac', label: 'Khác', dbValue: 'Khác' },
@@ -2514,7 +2670,7 @@ app.put('/api/accounts/:username', (req, res) => {
 });
 
 // ------------------- Xóa tài khoản theo username -------------------
-// Đồng thời xoá user_profiles + bet_totals (cùng username). Transaction: lỗi giữa chừng → rollback hết.
+// Đồng thời xoá user_profiles + bet_totals + user_vip_x10_params (cùng username). Transaction: lỗi giữa chừng → rollback hết.
 app.delete('/api/accounts/:username', (req, res) => {
   const username = req.params.username;
 
@@ -2564,18 +2720,46 @@ app.delete('/api/accounts/:username', (req, res) => {
             }
             const deletedBetTotals = this.changes;
 
-            db.run('COMMIT', (commitErr) => {
-              if (commitErr) {
-                console.error('❌ COMMIT:', commitErr.message);
-                return res.status(500).json({ error: 'Lỗi commit', detail: commitErr.message });
+            db.run(`DELETE FROM user_reward_periods WHERE username = ?`, [username], function (err4) {
+              if (err4) {
+                return db.run('ROLLBACK', () => {
+                  console.error('❌ Lỗi xoá user_reward_periods:', err4.message);
+                  res.status(500).json({
+                    error: 'Lỗi khi xoá user_reward_periods (đã rollback)',
+                    detail: err4.message,
+                  });
+                });
               }
-              res.json({
-                success: true,
-                deleted: {
-                  accounts: deletedAccounts,
-                  user_profiles: deletedProfiles,
-                  bet_totals: deletedBetTotals,
-                },
+              const deletedRewardPeriods = this.changes;
+
+              db.run(`DELETE FROM user_vip_x10_params WHERE username = ?`, [username], function (err5) {
+                if (err5) {
+                  return db.run('ROLLBACK', () => {
+                    console.error('❌ Lỗi xoá user_vip_x10_params:', err5.message);
+                    res.status(500).json({
+                      error: 'Lỗi khi xoá user_vip_x10_params (đã rollback)',
+                      detail: err5.message,
+                    });
+                  });
+                }
+                const deletedVipX10Params = this.changes;
+
+                db.run('COMMIT', (commitErr) => {
+                  if (commitErr) {
+                    console.error('❌ COMMIT:', commitErr.message);
+                    return res.status(500).json({ error: 'Lỗi commit', detail: commitErr.message });
+                  }
+                  res.json({
+                    success: true,
+                    deleted: {
+                      accounts: deletedAccounts,
+                      user_profiles: deletedProfiles,
+                      bet_totals: deletedBetTotals,
+                      user_reward_periods: deletedRewardPeriods,
+                      user_vip_x10_params: deletedVipX10Params,
+                    },
+                  });
+                });
               });
             });
           });
@@ -3581,6 +3765,154 @@ app.put('/api/device-balances/:device', (req, res) => {
   });
 });
 
+// ------------------- API: user_reward_periods (cược hợp lệ & thưởng tuần/tháng) -------------------
+function _parseRewardPeriodInt(v) {
+  if (v === undefined || v === null || v === '') return undefined;
+  const n = Number(v);
+  if (!Number.isFinite(n)) return NaN;
+  return Math.trunc(n);
+}
+
+// GET danh sách (phân trang)
+app.get('/api/user-reward-periods', (req, res) => {
+  const page = Math.max(1, parseInt(req.query.page, 10) || 1);
+  const limit = Math.max(1, Math.min(500, parseInt(req.query.limit, 10) || 50));
+  const offset = (page - 1) * limit;
+  const uq = req.query.username != null && String(req.query.username).trim() !== ''
+    ? `%${String(req.query.username).trim()}%`
+    : null;
+
+  const where = uq ? ' WHERE username LIKE ?' : '';
+  const paramsCount = uq ? [uq] : [];
+  const paramsData = uq ? [uq, limit, offset] : [limit, offset];
+
+  db.get(`SELECT COUNT(*) as total FROM user_reward_periods${where}`, paramsCount, (err, countRow) => {
+    if (err) return res.status(500).json({ error: err.message });
+    const total = countRow?.total || 0;
+    db.all(
+      `SELECT * FROM user_reward_periods${where} ORDER BY updated_at DESC, username ASC LIMIT ? OFFSET ?`,
+      paramsData,
+      (err2, rows) => {
+        if (err2) return res.status(500).json({ error: err2.message });
+        res.json({
+          page,
+          limit,
+          totalItems: total,
+          totalPages: Math.ceil(total / limit) || 1,
+          data: rows,
+        });
+      }
+    );
+  });
+});
+
+// GET một user
+app.get('/api/user-reward-periods/:username', (req, res) => {
+  const username = String(req.params.username || '').trim();
+  if (!username) return res.status(400).json({ error: 'Thiếu username' });
+  db.get(`SELECT * FROM user_reward_periods WHERE username = ?`, [username], (err, row) => {
+    if (err) return res.status(500).json({ error: err.message });
+    if (!row) return res.status(404).json({ error: 'Không tìm thấy bản ghi' });
+    res.json(row);
+  });
+});
+
+// POST tạo mới (mỗi username một dòng)
+app.post('/api/user-reward-periods', (req, res) => {
+  const b = req.body || {};
+  const username = b.username != null ? String(b.username).trim() : '';
+  if (!username) return res.status(400).json({ error: 'Thiếu username' });
+
+  const wj = _parseRewardPeriodInt(b.week_justified_bet_amount ?? b.weekJustifiedBetAmount) ?? 0;
+  const wr = _parseRewardPeriodInt(b.week_current_reward ?? b.weekCurrentReward) ?? 0;
+  const mj = _parseRewardPeriodInt(b.month_justified_bet_amount ?? b.monthJustifiedBetAmount) ?? 0;
+  const mr = _parseRewardPeriodInt(b.month_current_reward ?? b.monthCurrentReward) ?? 0;
+  if ([wj, wr, mj, mr].some((x) => Number.isNaN(x))) {
+    return res.status(400).json({ error: 'Giá trị số không hợp lệ' });
+  }
+
+  db.get(`SELECT id FROM user_reward_periods WHERE username = ?`, [username], (err, existing) => {
+    if (err) return res.status(500).json({ error: err.message });
+    if (existing) {
+      return res.status(409).json({ error: 'Đã tồn tại bản ghi cho username này', id: existing.id });
+    }
+    const sql = `INSERT INTO user_reward_periods (
+      username, week_justified_bet_amount, week_current_reward,
+      month_justified_bet_amount, month_current_reward, updated_at
+    ) VALUES (?, ?, ?, ?, ?, datetime('now'))`;
+    db.run(sql, [username, wj, wr, mj, mr], function (err2) {
+      if (err2) {
+        if (String(err2.message).includes('UNIQUE')) {
+          return res.status(409).json({ error: 'Đã tồn tại bản ghi cho username này' });
+        }
+        console.error('❌ Lỗi khi tạo user_reward_periods:', err2.message);
+        return res.status(500).json({ error: 'Không thể tạo bản ghi' });
+      }
+      db.get(`SELECT * FROM user_reward_periods WHERE id = ?`, [this.lastID], (err3, row) => {
+        if (err3) return res.status(500).json({ error: err3.message });
+        res.status(201).json(row);
+      });
+    });
+  });
+});
+
+// PUT cập nhật (chỉ gửi trường cần đổi; hỗ trợ camelCase)
+app.put('/api/user-reward-periods/:username', (req, res) => {
+  const username = String(req.params.username || '').trim();
+  if (!username) return res.status(400).json({ error: 'Thiếu username' });
+  const b = req.body || {};
+
+  const updates = [];
+  const values = [];
+  const pairs = [
+    ['week_justified_bet_amount', b.week_justified_bet_amount ?? b.weekJustifiedBetAmount],
+    ['week_current_reward', b.week_current_reward ?? b.weekCurrentReward],
+    ['month_justified_bet_amount', b.month_justified_bet_amount ?? b.monthJustifiedBetAmount],
+    ['month_current_reward', b.month_current_reward ?? b.monthCurrentReward],
+  ];
+  for (const [col, raw] of pairs) {
+    if (raw === undefined) continue;
+    const n = _parseRewardPeriodInt(raw);
+    if (Number.isNaN(n)) {
+      return res.status(400).json({ error: `Giá trị số không hợp lệ: ${col}` });
+    }
+    updates.push(`${col} = ?`);
+    values.push(n);
+  }
+  if (updates.length === 0) {
+    return res.status(400).json({ error: 'Không có trường để cập nhật' });
+  }
+  updates.push(`updated_at = datetime('now')`);
+  values.push(username);
+
+  const sql = `UPDATE user_reward_periods SET ${updates.join(', ')} WHERE username = ?`;
+  db.run(sql, values, function (err) {
+    if (err) {
+      console.error('❌ Lỗi khi cập nhật user_reward_periods:', err.message);
+      return res.status(500).json({ error: 'Không thể cập nhật bản ghi' });
+    }
+    if (this.changes === 0) return res.status(404).json({ error: 'Không tìm thấy bản ghi' });
+    db.get(`SELECT * FROM user_reward_periods WHERE username = ?`, [username], (err2, row) => {
+      if (err2) return res.status(500).json({ error: err2.message });
+      res.json(row);
+    });
+  });
+});
+
+// DELETE một dòng theo username
+app.delete('/api/user-reward-periods/:username', (req, res) => {
+  const username = String(req.params.username || '').trim();
+  if (!username) return res.status(400).json({ error: 'Thiếu username' });
+  db.run(`DELETE FROM user_reward_periods WHERE username = ?`, [username], function (err) {
+    if (err) {
+      console.error('❌ Lỗi khi xoá user_reward_periods:', err.message);
+      return res.status(500).json({ error: 'Không thể xoá bản ghi' });
+    }
+    if (this.changes === 0) return res.status(404).json({ error: 'Không tìm thấy bản ghi' });
+    res.json({ success: true, deleted: this.changes });
+  });
+});
+
 // ------------------- APIs cho bet_totals -------------------
 
 // Cộng dồn tổng cược (ngày/tuần/tháng/all) — thay cho việc ghi bet_history + updateTotals khi INSERT
@@ -4171,6 +4503,262 @@ app.get('/api/accounts/summary/:game', (req, res) => {
       totalWithdraw: row?.totalWithdraw || 0
     });
   });
+});
+
+// ------------------- VIP / X10 / Tân thủ params -------------------
+// POST: thêm mới (username UNIQUE)
+// PUT: sửa theo username (upsert)
+// DELETE: xoá theo username
+// GET: lấy 1 / tất cả
+
+function _parseIntStrict(v) {
+  const n = Number(v);
+  if (!Number.isFinite(n)) return null;
+  return Math.trunc(n);
+}
+
+function _hasOwn(obj, key) {
+  return Object.prototype.hasOwnProperty.call(obj || {}, key);
+}
+
+function _readBodyNumber(body, keys) {
+  for (const k of keys) {
+    if (_hasOwn(body, k)) return _parseIntStrict(body[k]);
+  }
+  return null;
+}
+
+function _usernameExistsInAccounts(username) {
+  return new Promise((resolve, reject) => {
+    db.get(
+      `SELECT 1 as ok FROM accounts WHERE username = ? LIMIT 1`,
+      [username],
+      (err, row) => {
+        if (err) return reject(err);
+        resolve(!!row);
+      }
+    );
+  });
+}
+
+app.get('/api/vip-x10-params', (req, res) => {
+  const sql = `SELECT * FROM user_vip_x10_params ORDER BY username ASC`;
+  db.all(sql, [], (err, rows) => {
+    if (err) return res.status(500).json({ error: err.message });
+    res.json({ ok: true, data: rows || [] });
+  });
+});
+
+app.get('/api/vip-x10-params/:username', (req, res) => {
+  const username = String(req.params.username || '').trim();
+  if (!username) return res.status(400).json({ error: 'Thiếu username' });
+
+  const sql = `SELECT * FROM user_vip_x10_params WHERE username = ?`;
+  db.get(sql, [username], (err, row) => {
+    if (err) return res.status(500).json({ error: err.message });
+    if (!row) return res.status(404).json({ error: 'Không tìm thấy dữ liệu' });
+    res.json({ ok: true, data: row });
+  });
+});
+
+app.post('/api/vip-x10-params', async (req, res) => {
+  try {
+    const body = req.body || {};
+    const username = String(body.username || body.user || '').trim();
+    if (!username) return res.status(400).json({ error: 'Thiếu username' });
+
+    const onboarding_task = _readBodyNumber(body, ['onboarding_task', 'onboardingTask', 'tannhanh_task', 'task']);
+    const vip = _readBodyNumber(body, ['vip', 'VIP']);
+    const x10_total_bet = _readBodyNumber(body, ['x10_total_bet', 'x10TotalBet', 'x10_total', 'totalBet']);
+    const x10_next_reward_total_bet = _readBodyNumber(body, [
+      'x10_next_reward_total_bet',
+      'x10NextRewardTotalBet',
+      'x10NextRewardTotal',
+      'next_reward_total_bet',
+      'nextMilestone',
+    ]);
+    // Alias cũ: x10_missing là "còn thiếu" đến mốc tiếp theo
+    const x10_missing_diff = _readBodyNumber(body, ['x10_missing', 'x10Missing', 'missing']);
+
+    if (onboarding_task == null) return res.status(400).json({ error: 'Thiếu onboarding_task (1-2-3)' });
+    if (vip == null) return res.status(400).json({ error: 'Thiếu vip (>= 0)' });
+    if (x10_total_bet == null) return res.status(400).json({ error: 'Thiếu x10_total_bet' });
+    if (x10_next_reward_total_bet == null && x10_missing_diff == null) {
+      return res.status(400).json({ error: 'Thiếu x10_next_reward_total_bet (mốc tiếp theo) hoặc x10_missing (còn thiếu)' });
+    }
+
+    if (![1, 2, 3].includes(onboarding_task)) return res.status(400).json({ error: 'onboarding_task phải là 1/2/3' });
+    if (vip < 0) return res.status(400).json({ error: 'vip phải >= 0' });
+    if (x10_total_bet < 0) return res.status(400).json({ error: 'x10_total_bet phải >= 0' });
+    if (x10_missing_diff != null && x10_missing_diff < 0) return res.status(400).json({ error: 'x10_missing (còn thiếu) phải >= 0' });
+
+    const finalX10NextRewardTotalBet =
+      x10_next_reward_total_bet == null ? (x10_total_bet + x10_missing_diff) : x10_next_reward_total_bet;
+    if (finalX10NextRewardTotalBet < 0) return res.status(400).json({ error: 'x10_next_reward_total_bet phải >= 0' });
+
+    // Chỉ cho phép username tồn tại trong bảng accounts
+    const exists = await _usernameExistsInAccounts(username);
+    if (!exists) return res.status(404).json({ error: 'Username không tồn tại trong accounts' });
+
+    const sql = `
+      INSERT INTO user_vip_x10_params
+        (username, onboarding_task, vip, x10_total_bet, x10_next_reward_total_bet, created_at, updated_at)
+      VALUES
+        (?, ?, ?, ?, ?, datetime('now'), datetime('now'))
+    `;
+
+    db.run(sql, [username, onboarding_task, vip, x10_total_bet, finalX10NextRewardTotalBet], function (err) {
+      if (err) {
+        if (String(err.message || '').includes('UNIQUE')) {
+          return res.status(409).json({ error: 'Đã tồn tại username' });
+        }
+        return res.status(500).json({ error: err.message });
+      }
+      res.json({ ok: true, id: this.lastID });
+    });
+  } catch (e) {
+    res.status(500).json({ error: String(e?.message || e) });
+  }
+});
+
+app.put('/api/vip-x10-params/:username', async (req, res) => {
+  try {
+    const username = String(req.params.username || '').trim();
+    if (!username) return res.status(400).json({ error: 'Thiếu username' });
+
+    // Chỉ cho phép username tồn tại trong bảng accounts
+    const exists = await _usernameExistsInAccounts(username);
+    if (!exists) return res.status(404).json({ error: 'Username không tồn tại trong accounts' });
+
+    const body = req.body || {};
+    const hasAny =
+      _hasOwn(body, 'onboarding_task') || _hasOwn(body, 'onboardingTask') ||
+      _hasOwn(body, 'vip') || _hasOwn(body, 'x10_total_bet') || _hasOwn(body, 'x10TotalBet') ||
+      _hasOwn(body, 'x10_next_reward_total_bet') || _hasOwn(body, 'x10NextRewardTotalBet') ||
+      _hasOwn(body, 'x10_missing') || _hasOwn(body, 'x10Missing');
+    if (!hasAny) return res.status(400).json({ error: 'Không có dữ liệu cập nhật' });
+
+    const existing = await new Promise((resolve, reject) => {
+      db.get(`SELECT * FROM user_vip_x10_params WHERE username = ?`, [username], (err, row) => {
+        if (err) return reject(err);
+        resolve(row || null);
+      });
+    });
+
+    const onboarding_task = _readBodyNumber(body, ['onboarding_task', 'onboardingTask']);
+    const vip = _readBodyNumber(body, ['vip', 'VIP']);
+    const x10_total_bet = _readBodyNumber(body, ['x10_total_bet', 'x10TotalBet', 'x10_total', 'totalBet']);
+    const x10_next_reward_total_bet = _readBodyNumber(body, [
+      'x10_next_reward_total_bet',
+      'x10NextRewardTotalBet',
+      'x10NextRewardTotal',
+      'next_reward_total_bet',
+      'nextMilestone',
+    ]);
+    // Alias cũ: x10_missing là "còn thiếu" đến mốc tiếp theo
+    const x10_missing_diff = _readBodyNumber(body, ['x10_missing', 'x10Missing', 'missing']);
+
+    // Không gửi onboarding_task: giữ dòng cũ; INSERT mới (chỉ vip/x10) → 0 = chưa sync tân thủ (không dùng ?? 1).
+    const finalOnboarding =
+      onboarding_task != null
+        ? onboarding_task
+        : existing != null
+          ? Number(existing.onboarding_task ?? 0)
+          : 0;
+    const finalVip = vip == null ? Number(existing?.vip ?? 0) : vip;
+    const finalX10Total = x10_total_bet == null ? Number(existing?.x10_total_bet ?? 0) : x10_total_bet;
+
+    if (![0, 1, 2, 3].includes(finalOnboarding)) return res.status(400).json({ error: 'onboarding_task phải là 0/1/2/3' });
+    // vip, x10_total_bet, x10_next_reward_total_bet: cho phép 0 (tất cả >= 0).
+    if (finalVip < 0) return res.status(400).json({ error: 'vip phải >= 0' });
+    if (finalX10Total < 0) return res.status(400).json({ error: 'x10_total_bet phải >= 0' });
+
+    const wantsUpdateNextReward = x10_next_reward_total_bet != null || x10_missing_diff != null;
+    if (x10_next_reward_total_bet != null && x10_next_reward_total_bet < 0) {
+      return res.status(400).json({ error: 'x10_next_reward_total_bet phải >= 0' });
+    }
+    if (x10_missing_diff != null && x10_missing_diff < 0) {
+      return res.status(400).json({ error: 'x10_missing (còn thiếu) phải >= 0' });
+    }
+
+    // Nếu chỉ gửi "x10_missing (còn thiếu)" thì tính: next = total + missing_diff
+    const finalNextRewardTotalBet =
+      x10_next_reward_total_bet != null
+        ? x10_next_reward_total_bet
+        : (x10_missing_diff != null ? finalX10Total + x10_missing_diff : null);
+
+    if (wantsUpdateNextReward) {
+      if (finalNextRewardTotalBet == null || !Number.isFinite(finalNextRewardTotalBet)) {
+        return res.status(400).json({
+          error:
+            'Thiếu dữ liệu hợp lệ cho mốc x10 tiếp theo (gửi x10_next_reward_total_bet hoặc x10_missing; kết quả phải là số >= 0)',
+        });
+      }
+      if (finalNextRewardTotalBet < 0) {
+        return res.status(400).json({ error: 'x10_next_reward_total_bet phải >= 0' });
+      }
+    }
+
+    const updates = [];
+    const values = [];
+    if (onboarding_task != null) { updates.push('onboarding_task = ?'); values.push(finalOnboarding); }
+    if (vip != null) { updates.push('vip = ?'); values.push(finalVip); }
+    if (x10_total_bet != null) { updates.push('x10_total_bet = ?'); values.push(finalX10Total); }
+    if (wantsUpdateNextReward) {
+      updates.push('x10_next_reward_total_bet = ?');
+      values.push(Math.trunc(finalNextRewardTotalBet));
+    }
+
+    if (existing) {
+      updates.push(`updated_at = datetime('now')`);
+      const sql = `UPDATE user_vip_x10_params SET ${updates.join(', ')} WHERE username = ?`;
+      values.push(username);
+      db.run(sql, values, function (upErr) {
+        if (upErr) return res.status(500).json({ error: upErr.message });
+        res.json({ ok: true, updated: this.changes });
+      });
+    } else {
+      // Chưa có dòng: cho phép UPSERT chỉ với các trường client gửi (vd. chỉ onboarding_task hoặc chỉ vip).
+      // Nếu không gửi mốc x10 tiếp theo thì mặc định 0 (đúng kỳ vọng "chỉ cập nhật vài trường").
+      const insertNextReward =
+        wantsUpdateNextReward && finalNextRewardTotalBet != null
+          ? finalNextRewardTotalBet
+          : 0;
+
+      const sql = `
+        INSERT INTO user_vip_x10_params
+          (username, onboarding_task, vip, x10_total_bet, x10_next_reward_total_bet, created_at, updated_at)
+        VALUES
+          (?, ?, ?, ?, ?, datetime('now'), datetime('now'))
+      `;
+      db.run(sql, [username, finalOnboarding, finalVip, finalX10Total, insertNextReward], function (insErr) {
+        if (insErr) return res.status(500).json({ error: insErr.message });
+        res.json({ ok: true, created: this.lastID });
+      });
+    }
+  } catch (e) {
+    res.status(500).json({ error: String(e?.message || e) });
+  }
+});
+
+app.delete('/api/vip-x10-params/:username', async (req, res) => {
+  try {
+    const username = String(req.params.username || '').trim();
+    if (!username) return res.status(400).json({ error: 'Thiếu username' });
+
+    // Chỉ cho phép username tồn tại trong bảng accounts
+    const exists = await _usernameExistsInAccounts(username);
+    if (!exists) return res.status(404).json({ error: 'Username không tồn tại trong accounts' });
+
+    const sql = `DELETE FROM user_vip_x10_params WHERE username = ?`;
+    db.run(sql, [username], function (err) {
+      if (err) return res.status(500).json({ error: err.message });
+      if (this.changes === 0) return res.status(404).json({ error: 'Không tìm thấy dữ liệu' });
+      res.json({ ok: true, deleted: this.changes });
+    });
+  } catch (e) {
+    res.status(500).json({ error: String(e?.message || e) });
+  }
 });
 
 const axios = require('axios');
