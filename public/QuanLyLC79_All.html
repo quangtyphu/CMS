@@ -21,6 +21,8 @@
     .status-select.proxy-error{background:#e67e22; color:#fff; font-weight:bold;}
     .status-select.proxy-error:hover{background:#d35400;}
     .status-select.done{background:var(--red); color:#fff; font-weight:bold;}
+    .status-select.locked{background:#7f8c8d; color:#fff; font-weight:bold;}
+    .status-select.locked:hover{background:#636e72;}
     .right{text-align:right;}
     .nowrap{white-space:nowrap;}
     .bank{font-weight:600;}
@@ -80,6 +82,26 @@
       background: #27ae60;
     }
 
+    button.btn-send-deposit {
+      padding: 4px 8px;
+      background: #16a085;
+      color: white;
+      border: none;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 12px;
+      white-space: nowrap;
+    }
+
+    button.btn-send-deposit:hover {
+      background: #138d75;
+    }
+
+    button.btn-send-deposit:disabled {
+      background: #95a5a6;
+      cursor: not-allowed;
+    }
+
     button.btn-withdraw {
       padding: 4px 8px;
       background: #e74c3c;
@@ -98,6 +120,20 @@
       color: #e74c3c;
       font-weight: bold;
     }
+    th.th-proxy, td.td-proxy, th.th-token, td.td-token {
+      max-width: 140px; min-width: 80px; padding: 6px 4px;
+    }
+    .proxy-field-input, .token-field-input {
+      width: 100%; max-width: 100%; box-sizing: border-box;
+      padding: 2px 4px; margin: 0; border: none; border-radius: 0;
+      background: transparent; font-size: 12px;
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+      outline: none; cursor: text;
+    }
+    .proxy-field-input:focus, .token-field-input:focus {
+      background: rgba(41, 128, 185, 0.08);
+      border-bottom: 1px dashed var(--blue);
+    }
   </style>
 </head>
 <body>
@@ -105,12 +141,30 @@
   <h2>Dashboard – Game LC79</h2>
 
   <button id="refreshBtn" onclick="refreshData()">🔄 Refresh</button>
+  <label style="margin-left:14px; font-size:14px; cursor:pointer;">
+    <input type="checkbox" id="rtAuto" onchange="rtSetup()"> Tự động làm mới (realtime)
+  </label>
+  <label style="margin-left:8px; font-size:14px;">
+    mỗi
+    <input type="number" id="rtInterval" min="2" step="1" value="10"
+      onchange="rtSetup()"
+      style="width:64px; padding:4px 6px; font-size:14px; border-radius:4px; border:1px solid #ccc; text-align:center;">
+    giây
+  </label>
+  <span id="rtStatus" class="small-muted" style="margin-left:10px;"></span>
 
   <!-- thêm controls phân trang cho bảng chính -->
   <div style="display:flex; justify-content:space-between; align-items:center; margin:8px 0; gap:20px;">
     <div>
-      <label>Hiển thị: <strong>15</strong> dòng / trang</label>
+      <label>Hiển thị: <strong id="accountPageSizeLabel">60</strong> dòng / trang</label>
       <span class="small-muted"> (bảng tài khoản)</span>
+    </div>
+    <div>
+      <label for="accountQuickFind">Tìm user/proxy:</label>
+      <input type="search" id="accountQuickFind" placeholder="vd: 192.168 hoặc username"
+        style="padding:5px 8px; font-size:14px; border-radius:4px; border:1px solid #ccc; min-width:200px;"
+        oninput="onAccountQuickFindInput()" autocomplete="off" spellcheck="false">
+      <span class="small-muted" title="Ctrl+F chỉ tìm trong trang hiện tại; ô này lọc mọi trang"> (lọc mọi trang)</span>
     </div>
     <div>
       <label>Sắp xếp theo:</label>
@@ -144,8 +198,8 @@
         <th>Tỷ lệ</th>
         <th>Ngân hàng và STK</th>
         <th>Thiết Bị</th>
-        <th>Proxy</th>
-        <th>Access Token</th>
+        <th class="th-proxy">Proxy</th>
+        <th class="th-token">Access Token</th>
         <th>Nạp Ngày</th>
         <th>Rút Ngày</th>
         <th>Đu Dây</th>
@@ -161,9 +215,79 @@
 // Hàm refresh giữ nguyên vị trí cuộn
 function refreshData() {
   const scrollY = window.scrollY;
-  init().then(() => {
+  return init().then(() => {
     window.scrollTo({ top: scrollY });
+    rtMarkUpdated();
   });
+}
+
+// ================= REALTIME (tự động làm mới) =================
+let rtTimer = null;
+const RT_AUTO_KEY = 'lc79_qlt_rt_auto';
+const RT_SEC_KEY = 'lc79_qlt_rt_sec';
+const RT_SEC_DEFAULT = 10;
+
+function rtGetSec() {
+  const el = document.getElementById('rtInterval');
+  let sec = parseInt(el && el.value, 10);
+  if (!Number.isFinite(sec) || sec < 2) sec = RT_SEC_DEFAULT;
+  return sec;
+}
+
+/** Bỏ qua nhịp realtime khi đang sửa inline (proxy/token/device) hoặc đang mở modal,
+ * tránh làm mất thao tác đang gõ. Bộ lọc (tìm user, sắp xếp) luôn được giữ nguyên. */
+function rtShouldSkip() {
+  const ae = document.activeElement;
+  if (ae && ae.classList && ae.classList.contains('editable-input')) return true;
+  if (document.querySelector('div[style*="z-index: 9999"], div[style*="z-index:9999"], div[style*="z-index: 10000"], div[style*="z-index:10000"]')) {
+    return true;
+  }
+  return false;
+}
+
+function rtMarkUpdated() {
+  const el = document.getElementById('rtStatus');
+  if (!el) return;
+  const auto = document.getElementById('rtAuto').checked;
+  const t = new Date().toLocaleTimeString('vi-VN');
+  el.textContent = auto ? `🟢 Tự động mỗi ${rtGetSec()}s · cập nhật ${t}` : `⚪ Đã tắt · cập nhật ${t}`;
+}
+
+function rtTick() {
+  if (rtShouldSkip()) return;
+  refreshData();
+}
+
+function rtSetup() {
+  if (rtTimer) { clearInterval(rtTimer); rtTimer = null; }
+  const auto = document.getElementById('rtAuto').checked;
+  const sec = rtGetSec();
+  try {
+    localStorage.setItem(RT_AUTO_KEY, auto ? '1' : '0');
+    localStorage.setItem(RT_SEC_KEY, String(sec));
+  } catch (_e) {}
+  const el = document.getElementById('rtStatus');
+  if (auto) {
+    rtTimer = setInterval(rtTick, sec * 1000);
+    if (el) el.textContent = `🟢 Tự động mỗi ${sec}s`;
+  } else if (el) {
+    el.textContent = '⚪ Đã tắt tự động';
+  }
+}
+
+function rtRestoreSettings() {
+  let auto = true;
+  let sec = RT_SEC_DEFAULT;
+  try {
+    const a = localStorage.getItem(RT_AUTO_KEY);
+    if (a !== null) auto = a === '1';
+    const s = parseInt(localStorage.getItem(RT_SEC_KEY), 10);
+    if (Number.isFinite(s) && s >= 2) sec = s;
+  } catch (_e) {}
+  const elAuto = document.getElementById('rtAuto');
+  const elSec = document.getElementById('rtInterval');
+  if (elAuto) elAuto.checked = auto;
+  if (elSec) elSec.value = String(sec);
 }
 const fmt = n => (Number(n||0)).toLocaleString('vi-VN');
 /** Bỏ 3 chữ số cuối (chia 1000, trunc), hiển thị có phân cách kiểu VN: 10_000_000 → 10.000 */
@@ -184,6 +308,7 @@ const escapeHtml = (s) => String(s == null ? '' : s)
   .replace(/</g, '&lt;')
   .replace(/>/g, '&gt;')
   .replace(/"/g, '&quot;');
+const escapeAttr = (s) => escapeHtml(s);
 /** Nhiệm vụ (bảng user_vip_x10_params): VIP / trunc((mốc X10 − tổng X10) / 1000) — ví dụ 872/15353 */
 function nhiemVuVipCtCell(p) {
   if (!p) return '<span class="muted">---</span>';
@@ -202,7 +327,8 @@ let allDevices = [];
 let currentSortBy = 'default'; // Biến lưu loại sắp xếp hiện tại
 let historyData = [];
 let userMap = {};
-let totalsByUser = {}; // { username: { deposit, withdraw } }
+let totalsByUser = {}; // { username: { deposit, withdraw } } — toàn thời gian
+let todayTotalsByUser = {}; // { username: { deposit, withdraw } } — trong ngày (VN)
 const normalizeUsername = (v) => String(v == null ? '' : v).trim();
 
 // Hàm xử lý thay đổi kiểu sắp xếp
@@ -214,14 +340,35 @@ function handleSortChange() {
 
 // ====== Phân trang cho bảng tài khoản (mới) ======
 let currentAccountPage = 1;
-const accountPageSize = 60; // <- mỗi trang 15 dòng như bạn yêu cầu
+const accountPageSize = 60;
+let cachedAccountsRows = [];
+let accountQuickFind = '';
+
+function onAccountQuickFindInput() {
+  const el = document.getElementById('accountQuickFind');
+  accountQuickFind = (el && el.value ? el.value : '').trim().toLowerCase();
+  currentAccountPage = 1;
+  renderTable(cachedAccountsRows);
+}
+
+function accountMatchesQuickFind(row) {
+  if (!accountQuickFind) return true;
+  const hay = [
+    row.username,
+    row.proxy,
+    row.accessToken,
+    profileMap[normalizeUsername(row.username)]?.nickname
+  ].map((x) => String(x == null ? '' : x).toLowerCase()).join(' ');
+  return hay.includes(accountQuickFind);
+}
 
 // ================= INIT =================
 async function init() {
   await loadProfiles();
   await loadDevices();
-  await loadTotalsByUser();      // 🆕 lấy tổng nạp/rút theo user từ backend (GROUP BY)
-  await loadHistory();           // chỉ để hiển thị bảng lịch sử (không dùng để tính tổng)
+  await loadTotalsByUser();      // tổng nạp/rút toàn thời gian (GROUP BY)
+  await loadTodayTotalsByUser(); // nạp/rút ngày theo user (GROUP BY, giờ VN)
+  await loadHistory();           // chỉ để hiển thị bảng lịch sử
   await loadAccountsWithStats(); // render bảng chính (bây giờ có phân trang)
 }
 
@@ -253,7 +400,7 @@ async function loadDevices() {
   }
 }
 
-// ================= LOAD TOTALS BY USER (API mới) =================
+// ================= LOAD TOTALS BY USER =================
 async function loadTotalsByUser() {
   try {
     const res = await fetch('/api/transactions/grouped/by-user');
@@ -262,6 +409,17 @@ async function loadTotalsByUser() {
   } catch (e) {
     console.error('Lỗi loadTotalsByUser:', e);
     totalsByUser = {};
+  }
+}
+
+async function loadTodayTotalsByUser() {
+  try {
+    const res = await fetch('/api/transactions/grouped/by-user/today');
+    if (!res.ok) throw new Error('Không lấy được nạp/rút ngày');
+    todayTotalsByUser = await res.json() || {};
+  } catch (e) {
+    console.error('Lỗi loadTodayTotalsByUser:', e);
+    todayTotalsByUser = {};
   }
 }
 
@@ -372,10 +530,6 @@ async function loadAccountsWithStats() {
       console.warn('Không lấy được streaks batch:', e);
     }
 
-    // Nạp ngày vẫn dựa theo historyData (lọc trong ngày)
-    const todayDepositMap = buildTodayDepositMap();
-    const todayWithdrawMap = buildTodayWithdrawMap();
-
     // Gắn số liệu vào accounts
     (accounts || []).forEach(acc => {
       const uname = normalizeUsername(acc.username);
@@ -389,8 +543,8 @@ async function loadAccountsWithStats() {
       acc.weekJustifiedBetAmount = rewardPeriodMap[uname]?.weekJustified || 0;
       acc.monthJustifiedBetAmount = rewardPeriodMap[uname]?.monthJustified || 0;
       acc.totalBetAll = betMap[uname]?.total_all || betMap[uname]?.totalAll || 0;
-      acc.todayDeposit = todayDepositMap[uname] || 0;
-      acc.todayWithdraw = todayWithdrawMap[uname] || 0;
+      acc.todayDeposit = todayTotalsByUser[uname]?.deposit || 0;
+      acc.todayWithdraw = todayTotalsByUser[uname]?.withdraw || 0;
       acc.balance = Number(profileMap[uname]?.balance || 0); // đồng bộ số dư để sắp xếp đúng
 
       // ✅ Tổng nạp/rút theo API GROUP BY (KHÔNG còn phụ thuộc 100 bản ghi)
@@ -399,9 +553,11 @@ async function loadAccountsWithStats() {
       acc.nhiemVuParams = nhiemVuMap[uname] || null;
     });
 
-    renderTable(accounts || []);
+    cachedAccountsRows = accounts || [];
+    renderTable(cachedAccountsRows);
   } catch (err) {
     console.error("Lỗi khi load accounts:", err);
+    cachedAccountsRows = [];
     renderTable([]);
   }
 }
@@ -413,9 +569,8 @@ async function loadAccountsWithStats() {
 function openDepositModal(username) {
   console.log('🔍 openDepositModal được gọi cho user:', username);
   
-  // Random từ 200k đến 290k, bội số của 10k
-  const randomAmount = (Math.floor(Math.random() * 10) + 20) * 10000; // 200k-290k
-  const amount = prompt(`Nhập số tiền nạp cho user ${username}:`, randomAmount.toString());
+  const defaultAmount = 200000; // 200k
+  const amount = prompt(`Nhập số tiền nạp cho user ${username}:`, defaultAmount.toString());
   console.log('💰 Số tiền nhập:', amount);
   if (!amount || amount <= 0) {
     console.log('❌ Số tiền không hợp lệ');
@@ -465,11 +620,10 @@ async function deposit(username, amount) {
 
 // Hiển thị modal QR code
 function showQRModal(data) {
-  const qrData = data.data;
+  const qrData = data.data || {};
   
   console.log('🖼️ QR Data:', qrData);
   
-  // Tạo modal
   const modal = document.createElement('div');
   modal.style.cssText = `
     position: fixed;
@@ -494,14 +648,13 @@ function showQRModal(data) {
     text-align: center;
   `;
   
-  // Ưu tiên: qr_link (URL) > qr_base64 > qr
   let qrImageSrc = qrData.qrLink || qrData.qr_link || '';
-  
-  // Nếu không có link, dùng base64
   if (!qrImageSrc) {
     const base64Data = qrData.qr_base64 || qrData.qrBase64 || qrData.qr;
     if (base64Data) {
-      qrImageSrc = `data:image/png;base64,${base64Data}`;
+      qrImageSrc = String(base64Data).startsWith('data:image')
+        ? base64Data
+        : `data:image/png;base64,${base64Data}`;
     }
   }
   
@@ -512,16 +665,16 @@ function showQRModal(data) {
     
     <div style="background:#f8f9fa; padding:20px; border-radius:10px; margin:20px 0;">
       <h3 style="margin-top:0;">Thông tin chuyển khoản</h3>
-      <p style="margin:8px 0;"><strong>🎮 User:</strong> ${qrData.username || 'N/A'}</p>
-      <p style="margin:8px 0;"><strong>👤 Tên TK:</strong> ${qrData.name || qrData.accountHolder || 'N/A'}</p>
-      <p style="margin:8px 0;"><strong>🏦 Số TK:</strong> ${qrData.receiver || qrData.accountNumber || 'N/A'}</p>
+      <p style="margin:8px 0;"><strong>🎮 User:</strong> ${escapeHtml(qrData.username || 'N/A')}</p>
+      <p style="margin:8px 0;"><strong>👤 Tên TK:</strong> ${escapeHtml(qrData.name || qrData.accountHolder || 'N/A')}</p>
+      <p style="margin:8px 0;"><strong>🏦 Số TK:</strong> ${escapeHtml(qrData.receiver || qrData.accountNumber || 'N/A')}</p>
       <p style="margin:8px 0;"><strong>💰 Số tiền:</strong> ${Number(qrData.amount || 0).toLocaleString('vi-VN')} đ</p>
-      <p style="margin:8px 0;"><strong>📝 Nội dung:</strong> <span style="color:#e74c3c; font-weight:bold;">${qrData.msg || qrData.transferContent || 'N/A'}</span></p>
+      <p style="margin:8px 0;"><strong>📝 Nội dung:</strong> <span style="color:#e74c3c; font-weight:bold;">${escapeHtml(qrData.msg || qrData.transferContent || 'N/A')}</span></p>
     </div>
     
     <div style="margin:20px 0;">
       ${qrImageSrc ? `
-        <img src="${qrImageSrc}" alt="QR Code" 
+        <img src="${qrImageSrc.replace(/"/g, '&quot;')}" alt="QR Code" 
           style="max-width:300px; width:100%; border:2px solid #ddd; border-radius:8px;" 
           onerror="console.error('Lỗi load QR:', this.src); this.style.display='none'; this.nextElementSibling.style.display='block';">
       ` : ''}
@@ -534,29 +687,91 @@ function showQRModal(data) {
     <p style="color:#7f8c8d; font-size:13px;">Vui lòng quét mã QR hoặc chuyển khoản theo thông tin trên</p>
     <p style="color:#e74c3c; font-size:12px;">⏰ Hết hạn sau: <strong>${qrData.expired || 300}</strong> giây</p>
     
-    <button onclick="this.closest('div').parentElement.remove()" style="
-      width: 100%;
-      padding: 12px;
-      font-size: 16px;
-      background: #3498db;
-      color: white;
-      border: none;
-      border-radius: 8px;
-      cursor: pointer;
-      font-weight: bold;
-      margin-top: 10px;
-    ">Đóng</button>
+    <div style="display:flex; gap:10px; margin-top:10px;">
+      <button type="button" id="depositSendBtn" style="
+        flex: 1;
+        padding: 12px;
+        font-size: 16px;
+        background: #2ecc71;
+        color: white;
+        border: none;
+        border-radius: 8px;
+        cursor: pointer;
+        font-weight: bold;
+      ">📤 Gửi</button>
+      <button type="button" id="depositCloseBtn" style="
+        flex: 1;
+        padding: 12px;
+        font-size: 16px;
+        background: #3498db;
+        color: white;
+        border: none;
+        border-radius: 8px;
+        cursor: pointer;
+        font-weight: bold;
+      ">Đóng</button>
+    </div>
   `;
   
   modal.appendChild(content);
   document.body.appendChild(modal);
-  
-  // Click bên ngoài để đóng
-  modal.addEventListener('click', (e) => {
-    if (e.target === modal) {
-      document.body.removeChild(modal);
+
+  const closeModal = () => {
+    if (modal.parentElement) modal.parentElement.removeChild(modal);
+  };
+
+  content.querySelector('#depositCloseBtn').addEventListener('click', closeModal);
+  content.querySelector('#depositSendBtn').addEventListener('click', async () => {
+    const sendBtn = content.querySelector('#depositSendBtn');
+    sendBtn.disabled = true;
+    sendBtn.textContent = 'Đang gửi...';
+    try {
+      await sendDepositToThirdParty(qrData);
+      closeModal();
+    } catch (err) {
+      console.error('❌ Gửi bên thứ 3:', err);
+      alert('❌ Không gửi được cho bên thứ 3: ' + err.message);
+      sendBtn.disabled = false;
+      sendBtn.textContent = '📤 Gửi';
     }
   });
+  
+  modal.addEventListener('click', (e) => {
+    if (e.target === modal) closeModal();
+  });
+}
+
+async function sendDepositToThirdParty(qrData) {
+  const payload = {
+    username: qrData.username,
+    amount: Number(qrData.amount || 0),
+    orderId: qrData.orderId,
+    accountNumber: qrData.accountNumber || qrData.receiver || '',
+    accountHolder: qrData.accountHolder || qrData.name || '',
+    bank: qrData.bank || qrData.type || '',
+    transferContent: qrData.transferContent || qrData.msg || '',
+    qrBase64: qrData.qrBase64 || qrData.qr_base64 || qrData.qr || '',
+    qrLink: qrData.qrLink || qrData.qr_link || '',
+    qrImagePath: qrData.qrImagePath || qrData.qr_image_path || '',
+  };
+
+  if (!payload.username || !payload.orderId) {
+    throw new Error('Thiếu username hoặc orderId');
+  }
+
+  console.log('📤 Gửi lệnh nạp cho bên thứ 3:', payload);
+  const res = await fetch(`${api8080Base}/api/deposit/send-third-party`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+  const data = await res.json();
+  if (!res.ok || !data.ok) {
+    throw new Error(data.error || 'Unknown error');
+  }
+  console.log('✅ Đã gửi bên thứ 3:', data);
+  alert(`✅ ${data.message || 'Đã gửi yêu cầu nạp tiền cho bên thứ 3'}`);
+  loadAccountsWithStats();
 }
 
 // ========== MODAL RÚT TIỀN ==========
@@ -674,18 +889,23 @@ function bankCell(bank, accountNumber) {
   return `<span>${bank || accountNumber}</span>`;
 }
 
+function usernameCell(username) {
+  return `<span class="nowrap">${escapeHtml(username || '---')}</span>`;
+}
+
 function deviceEditable(username, value) {
   const safe = value || '---';
   return `<span class="editable-device" data-username="${username}">${safe}</span>`;
 }
 
 function statusSelect(username, status) {
-  const valid = ['Đang Chơi','Proxy Lỗi','Token Lỗi','Hết Tiền','OFF Ngày','Mới Tạo','Tạm Nghỉ','Đủ Ngày','Đủ Tuần','Đủ Tháng'];
+  const valid = ['Đang Chơi','Proxy Lỗi','Token Lỗi','Hết Tiền','Khoá','OFF Ngày','Mới Tạo','Tạm Nghỉ','Đủ Ngày','Đủ Tuần','Đủ Tháng'];
   const s = valid.includes(status) ? status : 'Mới Tạo';
   const cls = [
     'status-select',
     (s === 'Đang Chơi' ? 'playing' : ''),
     (s === 'Proxy Lỗi' ? 'proxy-error' : ''),
+    (s === 'Khoá' ? 'locked' : ''),
     (['Hết Tiền', 'Token Lỗi'].includes(s) ? 'done' : '')
   ].join(' ');
   return `
@@ -700,20 +920,25 @@ function statusSelect(username, status) {
 function renderTable(rows) {
   const tbody = document.querySelector('#tbl tbody');
   tbody.innerHTML = '';
-
+  const qEl = document.getElementById('accountQuickFind');
+  if (qEl) accountQuickFind = qEl.value.trim().toLowerCase();
 
   // Lọc LC79
   let filtered = (rows || []).filter(r => (r.game||'').toUpperCase() === 'LC79');
+  if (accountQuickFind) {
+    filtered = filtered.filter(accountMatchesQuickFind);
+  }
 
   // Sắp xếp theo loại được chọn
   const statusPriority = {
     'Đang Chơi': 1,
-    'Proxy Lỗi': 2,
     'Hết Tiền': 3,
-    'Token Lỗi': 4,
-    'Đủ Ngày': 5,
-    'Đủ Tuần': 6,
-    'Đủ Tháng': 7
+    'Khoá': 4,
+    'Proxy Lỗi': 5,
+    'Token Lỗi': 6,
+    'Đủ Ngày': 7,
+    'Đủ Tuần': 8,
+    'Đủ Tháng': 9
   };
 
   filtered = filtered.sort((a, b) => {
@@ -781,7 +1006,7 @@ function renderTable(rows) {
     tbody.insertAdjacentHTML('beforeend', `
       <tr style="background:${getRowColor(r.status)}">
         <td>${(start + idx + 1)}</td>
-        <td class="nowrap">${escapeHtml(uname || '---')}</td>
+        <td class="nowrap">${usernameCell(uname)}</td>
         <td>${escapeHtml(p.nickname || uname || '')}</td>
         <td class="right">${fmt(p.balance)}</td>
         <td class="right">${fmt(r.totalBetDay || 0)}</td>
@@ -796,15 +1021,13 @@ function renderTable(rows) {
         </td>
         <td>${bankCell(r.bank, r.accountNumber)}</td>
         <td>${deviceEditable(uname, r.device)}</td>
-        <td style="max-width:130px; min-width:60px; width:130px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">
-          <span class="editable-proxy" data-username="${uname}" data-full="${r.proxy || ''}">
-            ${(r.proxy && r.proxy.length > 18) ? r.proxy.slice(0, 15) + '...' : (r.proxy || '---')}
-          </span>
+        <td class="td-proxy">
+          <input type="text" class="proxy-field-input" data-username="${escapeAttr(uname)}"
+            value="${escapeAttr(r.proxy || '')}" title="${escapeAttr(r.proxy || '')}" spellcheck="false" readonly>
         </td>
-        <td style="max-width:130px; min-width:60px; width:130px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">
-          <span class="editable-token" data-username="${uname}" data-full="${r.accessToken || ''}">
-            ${(r.accessToken && r.accessToken.length > 18) ? r.accessToken.slice(0, 15) + '...' : (r.accessToken || '---')}
-          </span>
+        <td class="td-token">
+          <input type="text" class="token-field-input" data-username="${escapeAttr(uname)}"
+            value="${escapeAttr(r.accessToken || '')}" title="${escapeAttr(r.accessToken || '')}" spellcheck="false" readonly>
         </td>
         <td class="right">${fmt(r.todayDeposit||0)}</td>
         <td class="right">${fmt(r.todayWithdraw||0)}</td>
@@ -886,16 +1109,14 @@ function renderAccountsPagination(totalItems, totalPages, currentPageLocal) {
 }
 
 function renderTableFromCurrent() {
-  // loadAccountsWithStats sẽ gọi renderTable khi hoàn tất; nhưng ở đây chúng ta đã có dữ liệu hiện tại,
-  // nên chỉ gọi lại renderTable với dữ liệu hiện có: fetch lại /api/accounts để đồng bộ tốt hơn.
-  // Tuy nhiên để đơn giản và nhanh, gọi loadAccountsWithStats để đảm bảo mọi dữ liệu cập nhật.
-  loadAccountsWithStats();
+  renderTable(cachedAccountsRows);
 }
 
 // ================= EDITABLE CELLS =================
 function proxyEditable(username, value) {
-  const safe = value || '---';
-  return `<span class="editable-proxy" data-username="${username}">${safe}</span>`;
+  const u = escapeAttr(username);
+  const v = escapeAttr(value || '');
+  return `<input type="text" class="proxy-field-input" data-username="${u}" value="${v}" title="${v}" spellcheck="false" readonly>`;
 }
 
 function formatStreak(um) {
@@ -906,6 +1127,7 @@ function formatStreak(um) {
 function getRowColor(status) {
   switch (status) {
     case 'Hết Tiền': return '#ffb3b3';     // đỏ nhạt
+    case 'Khoá': return '#d5d8dc';        // xám nhạt
     case 'Đang Chơi': return '#b3ffcc';    // xanh nhạt
     case 'Proxy Lỗi': return '#ffe0b3';     // cam nhạt — tách khỏi Đang Chơi
     case 'Token Lỗi': return '#ff6666';    // 🔴 đỏ đậm
@@ -1046,41 +1268,6 @@ async function loadHistory() {
   }
 }
 
-function buildTodayDepositMap() {
-  const now = new Date();
-  const startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
-  const endOfDay = startOfDay + 24 * 60 * 60 * 1000;
-  const todayMap = {};
-
-  historyData.forEach(txn => {
-    if (txn.type === "Nạp tiền") {
-      const t = new Date(txn.time).getTime();
-      if (t >= startOfDay && t < endOfDay) {
-        todayMap[txn.username] = (todayMap[txn.username] || 0) + Number(txn.amount || 0);
-      }
-    }
-  });
-
-  return todayMap;
-}
-function buildTodayWithdrawMap() {
-  const now = new Date();
-  const startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
-  const endOfDay = startOfDay + 24 * 60 * 60 * 1000;
-  const todayWithdrawMap = {};
-
-  historyData.forEach(txn => {
-    if (txn.type === "Rút tiền" && txn.status === "Thành công") {
-      const t = new Date(txn.time).getTime();
-      if (t >= startOfDay && t < endOfDay) {
-        todayWithdrawMap[txn.username] = (todayWithdrawMap[txn.username] || 0) + Number(txn.amount || 0);
-      }
-    }
-  });
-
-  return todayWithdrawMap;
-}
-
 async function updateTxnDevice(transactionId, device) {
   try {
     const res = await fetch(`${api8080Base}/api/transactions/${transactionId}/device`, {
@@ -1201,53 +1388,69 @@ document.addEventListener('click', function(e) {
 
 // ================= INLINE EDIT PROXY =================
 document.addEventListener('click', function(e) {
-  if (!e.target.classList.contains('editable-proxy')) return;
-  const span = e.target;
-  const username = span.dataset.username;
-  const fullValue = span.getAttribute('data-full') || '';
-  const input = document.createElement('input');
-  input.type = 'text';
-  input.value = (fullValue === '---') ? '' : fullValue;
-  input.className = 'editable-input';
-  span.replaceWith(input);
+  const input = e.target.closest('.proxy-field-input');
+  if (!input || !input.readOnly) return;
+  input.readOnly = false;
+  input.classList.add('editable-input');
   input.focus();
+  input.select();
+});
 
-  input.addEventListener('blur', async ()=>{
-    const proxy = input.value.trim();
+document.addEventListener('focusout', async function(e) {
+  const input = e.target;
+  if (!input.classList || !input.classList.contains('proxy-field-input') || input.readOnly) return;
+  const username = input.dataset.username;
+  const proxy = input.value.trim();
+  input.readOnly = true;
+  input.classList.remove('editable-input');
+  try {
     await fetch('/api/users/proxy', {
-      method:'POST',
-      headers:{'Content-Type':'application/json'},
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ username, proxy })
     });
     await loadAccountsWithStats();
-  });
+  } catch (err) {
+    console.error('Lỗi cập nhật proxy:', err);
+    await loadAccountsWithStats();
+  }
 });
 
 // ================= INLINE EDIT TOKEN =================
 document.addEventListener('click', function(e) {
-  if (!e.target.classList.contains('editable-token')) return;
-  const span = e.target;
-  const username = span.dataset.username;
-  const fullValue = span.getAttribute('data-full') || '';
-  const input = document.createElement('input');
-  input.type = 'text';
-  input.value = (fullValue === '---') ? '' : fullValue;
-  input.className = 'editable-input';
-  span.replaceWith(input);
+  const input = e.target.closest('.token-field-input');
+  if (!input || !input.readOnly) return;
+  input.readOnly = false;
+  input.classList.add('editable-input');
   input.focus();
-
-  input.addEventListener('blur', async ()=>{
-    const accessToken = input.value.trim();
-    await fetch('/api/users/accessToken', {
-      method:'POST',
-      headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({ username, accessToken })
-    });
-    await loadAccountsWithStats();
-  });
+  input.select();
 });
 
-init();
+document.addEventListener('focusout', async function(e) {
+  const input = e.target;
+  if (!input.classList || !input.classList.contains('token-field-input') || input.readOnly) return;
+  const username = input.dataset.username;
+  const token = input.value.trim();
+  input.readOnly = true;
+  input.classList.remove('editable-input');
+  try {
+    await fetch('/api/users/accessToken', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username, accessToken: token })
+    });
+    await loadAccountsWithStats();
+  } catch (err) {
+    console.error('Lỗi cập nhật token:', err);
+    await loadAccountsWithStats();
+  }
+});
+
+rtRestoreSettings();
+init().then(() => {
+  rtMarkUpdated();
+  rtSetup();
+});
 </script>
 </body>
 </html>

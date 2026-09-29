@@ -1,0 +1,1175 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Quản Lý Chrome</title>
+  <script src="https://cdn.jsdelivr.net/npm/axios/dist/axios.min.js"></script>
+  <style>
+    :root { --blue: #3498db; --green: #27ae60; --red: #e74c3c; --gray: #f7f8fa; --text: #2c3e50; }
+    body { font-family: Arial, sans-serif; background: var(--gray); margin: 0; padding: 20px; color: var(--text); }
+    h1 { margin: 0 0 6px; font-size: 1.35rem; }
+    .hint { font-size: 13px; color: #666; margin-bottom: 16px; line-height: 1.45; }
+    .panel {
+      background: #fff; border-radius: 8px; padding: 16px; margin-bottom: 18px;
+      box-shadow: 0 1px 3px rgba(0,0,0,.08);
+    }
+    .panel h2 { margin: 0 0 12px; font-size: 1rem; }
+    .form-row { display: flex; flex-wrap: wrap; gap: 10px; align-items: flex-end; }
+    .field { flex: 1; min-width: 200px; }
+    .field label { display: block; font-weight: 600; font-size: 13px; margin-bottom: 4px; }
+    .field input, .field textarea {
+      width: 100%; box-sizing: border-box; padding: 8px 10px; border: 1px solid #ccc;
+      border-radius: 4px; font-size: 14px; font-family: inherit;
+    }
+    .field textarea { min-height: 88px; resize: vertical; }
+    button {
+      padding: 8px 14px; border: none; border-radius: 4px; cursor: pointer; font-size: 14px;
+    }
+    .btn-primary { background: var(--blue); color: #fff; }
+    .btn-primary:hover { background: #2980b9; }
+    .btn-open { background: var(--green); color: #fff; }
+    .btn-open:hover { background: #1e8449; }
+    .btn-open:disabled { opacity: 0.5; cursor: wait; }
+    .btn-del { background: #fff; color: var(--red); border: 1px solid var(--red); margin-left: 4px; }
+    .btn-del:hover { background: #fdecea; }
+    .btn-xoso66 { background: #8e44ad; color: #fff; font-size: 12px; padding: 6px 10px; }
+    .btn-xoso66:hover { background: #732d91; }
+    .btn-xoso66:disabled { opacity: 0.55; cursor: wait; }
+    .btn-allgame { background: #2980b9; color: #fff; font-size: 12px; padding: 6px 10px; margin-left: 4px; }
+    .btn-allgame:hover { background: #1f6fa3; }
+    .btn-allgame:disabled { opacity: 0.55; cursor: wait; }
+    .btn-lc79 { background: #16a085; color: #fff; font-size: 12px; padding: 6px 10px; margin-left: 4px; }
+    .btn-lc79:hover { background: #117a65; }
+    .btn-lc79:disabled { opacity: 0.55; cursor: wait; }
+    .game-btns { display: flex; flex-wrap: wrap; gap: 4px; justify-content: center; align-items: center; }
+    .modal-backdrop {
+      display: none; position: fixed; inset: 0; background: rgba(0,0,0,.45);
+      z-index: 1000; align-items: center; justify-content: center; padding: 16px;
+    }
+    .modal-backdrop.open { display: flex; }
+    .modal-box {
+      background: #fff; border-radius: 10px; max-width: 640px; width: 100%;
+      max-height: 90vh; overflow: auto; padding: 18px 20px; box-shadow: 0 8px 32px rgba(0,0,0,.2);
+    }
+    .modal-box h3 { margin: 0 0 4px; font-size: 1.1rem; }
+    .modal-sub { font-size: 12px; color: #666; margin-bottom: 12px; }
+    .modal-grid {
+      display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 12px;
+    }
+    .modal-grid .field-full { grid-column: 1 / -1; }
+    .modal-log {
+      background: #1e1e1e; color: #d4d4d4; font-size: 12px; padding: 10px;
+      border-radius: 6px; max-height: 160px; overflow-y: auto; white-space: pre-wrap;
+      font-family: Consolas, monospace; margin-bottom: 12px; min-height: 48px;
+    }
+    .modal-actions { display: flex; flex-wrap: wrap; gap: 8px; justify-content: flex-end; }
+    .btn-gray { background: #95a5a6; color: #fff; }
+    .table-wrap { overflow-x: auto; margin-bottom: 8px; }
+    table { width: 100%; min-width: 980px; border-collapse: collapse; background: #fff; border-radius: 8px; overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,.08); }
+    th, td { border: 1px solid #e8e8e8; padding: 10px 8px; font-size: 13px; vertical-align: top; }
+    th { background: var(--blue); color: #fff; text-align: center; white-space: nowrap; }
+    td.center { text-align: center; vertical-align: middle; }
+    td input.cell-in {
+      width: 100%; min-width: 72px; box-sizing: border-box; padding: 6px 8px;
+      border: 1px solid #ddd; border-radius: 4px; font-size: 13px; font-family: inherit;
+    }
+    td input.proxy-cell { min-width: 200px; }
+    tr:nth-child(even) { background: #fafafa; }
+    .msg { margin-top: 10px; font-size: 13px; min-height: 18px; }
+    .msg.ok { color: var(--green); }
+    .msg.err { color: var(--red); }
+    .empty { text-align: center; color: #888; padding: 24px; }
+    .subhint { font-size: 12px; color: #888; margin-top: 4px; }
+  </style>
+</head>
+<body>
+  <h1>Quản Lý Chrome</h1>
+  <p class="hint">
+    Proxy SOCKS5: <code>host:port:user:pass</code>. Mỗi profile = Chrome + proxy riêng.
+    <strong>Khóa chính = tên thiết bị</strong> (bắt buộc, duy nhất). Khi đổi <strong>proxy</strong> hoặc <strong>thiết bị</strong>, hệ thống tự đồng bộ sang acc LC79 và xoso66 (theo device và username profile).
+    <strong>Username</strong> game có thể để trống lúc tạo và cập nhật sau trên bảng.
+    Cột <strong>LC79</strong>: lưu acc vào <code>game_data.db</code> (accounts + user_profiles, có <strong>NickName</strong>).
+    Cột <strong>Xoso66</strong>: đăng ký acc (CMS chỉ bật <code>xoso66_api.py</code>, không chạy main.py).
+    <strong>AllGame</strong>: lưu acc vào <code>allgame.db</code> — khóa <code>game + username</code> (username có thể trùng giữa các game).
+  </p>
+
+  <div class="panel">
+    <h2>Tab mặc định (tất cả profile — nếu profile để trống tab riêng)</h2>
+    <div class="field">
+      <label for="globalTabs">URL mở khi khởi động (mỗi dòng một tab)</label>
+      <textarea id="globalTabs" placeholder="https://www.google.com&#10;https://c168b2.cc/home/register"></textarea>
+      <div class="subhint">Lưu cấu hình chung trước khi mở profile không có tab riêng.</div>
+    </div>
+    <button type="button" class="btn-primary" style="margin-top:10px" onclick="saveGlobalTabs()">Lưu tab mặc định</button>
+    <div id="globalMsg" class="msg"></div>
+  </div>
+
+  <div class="panel">
+    <h2>Tạo profile mới</h2>
+    <div class="form-row">
+      <div class="field" style="max-width:160px">
+        <label for="newDevice">Thiết bị *</label>
+        <input id="newDevice" type="text" placeholder="MBB4" required />
+      </div>
+      <div class="field" style="max-width:220px">
+        <label for="newName">Username (tuỳ chọn)</label>
+        <input id="newName" type="text" placeholder="Có thể cập nhật sau" />
+      </div>
+      <div class="field" style="max-width:360px">
+        <label for="newProxy">Proxy</label>
+        <input id="newProxy" type="text" placeholder="host:port:user:pass" required />
+      </div>
+    </div>
+    <div class="form-row" style="margin-top:10px">
+      <div class="field" style="max-width:140px">
+        <label for="newPhone">SĐT</label>
+        <input id="newPhone" type="text" placeholder="09xxxxxxxx" />
+      </div>
+      <div class="field" style="max-width:100px">
+        <label for="newBank">Ngân hàng</label>
+        <input id="newBank" type="text" placeholder="VPB" />
+      </div>
+      <div class="field" style="max-width:160px">
+        <label for="newAccountNumber">STK</label>
+        <input id="newAccountNumber" type="text" placeholder="Số tài khoản" />
+      </div>
+      <div class="field" style="min-width:180px">
+        <label for="newAccountHolder">Chủ TK</label>
+        <input id="newAccountHolder" type="text" placeholder="Họ tên chủ tài khoản" />
+      </div>
+    </div>
+    <div class="field" style="margin-top:10px">
+      <label for="newTabs">Tab khởi động (tuỳ chọn — để trống dùng tab mặc định)</label>
+      <textarea id="newTabs" placeholder="https://example.com"></textarea>
+    </div>
+    <button type="button" class="btn-primary" style="margin-top:10px" onclick="createProfile()">Tạo mới</button>
+    <div id="formMsg" class="msg"></div>
+  </div>
+
+  <div class="table-wrap">
+  <table>
+    <thead>
+      <tr>
+        <th>STT</th>
+        <th>Thiết bị</th>
+        <th>Username</th>
+        <th>SĐT</th>
+        <th>Ngân hàng</th>
+        <th>STK</th>
+        <th>Chủ TK</th>
+        <th>Proxy</th>
+        <th>Game</th>
+        <th>Thao tác</th>
+      </tr>
+    </thead>
+    <tbody id="dataBody">
+      <tr><td colspan="10" class="empty">Đang tải…</td></tr>
+    </tbody>
+  </table>
+  </div>
+  <div id="tableMsg" class="msg"></div>
+
+  <div id="allgameModal" class="modal-backdrop" role="dialog" aria-modal="true">
+    <div class="modal-box">
+      <h3>Lưu tài khoản AllGame</h3>
+      <p class="modal-sub" id="allgameModalProfile">Profile: —</p>
+      <div class="modal-grid">
+        <div class="field field-full">
+          <label for="allgamePortal">Cổng game *</label>
+          <select id="allgamePortal"></select>
+        </div>
+        <div class="field">
+          <label for="allgameUsername">Username *</label>
+          <input id="allgameUsername" type="text" placeholder="Tài khoản game" />
+        </div>
+        <div class="field">
+          <label for="allgamePassword">Mật khẩu đăng nhập</label>
+          <input id="allgamePassword" type="text" value="Valentine1" />
+        </div>
+        <div class="field">
+          <label for="allgamePhone">SĐT</label>
+          <input id="allgamePhone" type="text" maxlength="10" />
+        </div>
+        <div class="field">
+          <label for="allgameHolder">Tên đăng ký</label>
+          <input id="allgameHolder" type="text" />
+        </div>
+        <div class="field field-full">
+          <label for="allgameProxy">Proxy</label>
+          <input id="allgameProxy" type="text" placeholder="host:port:user:pass" />
+        </div>
+        <div class="field">
+          <label for="allgameFundPw">MK rút (6 số)</label>
+          <input id="allgameFundPw" type="text" value="270288" maxlength="6" />
+        </div>
+        <div class="field">
+          <label for="allgameBank">Ngân hàng</label>
+          <select id="allgameBank">
+            <option value="">-- Chọn --</option>
+            <option value="MSB">MSB</option>
+            <option value="VPB">VPBank</option>
+            <option value="VIB">VIB</option>
+            <option value="TCB">Techcombank</option>
+            <option value="ACB">ACB</option>
+          </select>
+        </div>
+        <div class="field">
+          <label for="allgameStk">STK</label>
+          <input id="allgameStk" type="text" />
+        </div>
+        <div class="field">
+          <label for="allgameDevice">Thiết bị</label>
+          <input id="allgameDevice" type="text" />
+        </div>
+      </div>
+      <div id="allgameLog" class="modal-log">Chọn game + username → Lưu vào allgame.db (portal_id + username).</div>
+      <div class="modal-actions">
+        <button type="button" class="btn-gray" onclick="closeAllgameModal()">Đóng</button>
+        <button type="button" class="btn-primary" id="btnAllgameSave" onclick="saveAllgameAccount()">Lưu vào AllGame DB</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="lc79Modal" class="modal-backdrop" role="dialog" aria-modal="true">
+    <div class="modal-box">
+      <h3>Đăng ký LC79</h3>
+      <p class="modal-sub" id="lc79ModalProfile">Profile: —</p>
+      <div class="modal-grid">
+        <div class="field">
+          <label for="lc79Username">Username *</label>
+          <input id="lc79Username" type="text" placeholder="Tài khoản LC79" />
+        </div>
+        <div class="field">
+          <label for="lc79Nickname">NickName *</label>
+          <input id="lc79Nickname" type="text" placeholder="NickName in-game" />
+        </div>
+        <div class="field">
+          <label for="lc79Password">Mật khẩu đăng nhập *</label>
+          <input id="lc79Password" type="text" value="123123" />
+        </div>
+        <div class="field">
+          <label for="lc79Phone">SĐT (10 số) *</label>
+          <input id="lc79Phone" type="text" maxlength="10" />
+        </div>
+        <div class="field field-full">
+          <label for="lc79Holder">Tên đăng ký *</label>
+          <input id="lc79Holder" type="text" />
+        </div>
+        <div class="field field-full">
+          <label for="lc79Proxy">Proxy *</label>
+          <input id="lc79Proxy" type="text" placeholder="host:port:user:pass" />
+        </div>
+        <div class="field">
+          <label for="lc79FundPw">MK rút (6 số)</label>
+          <input id="lc79FundPw" type="text" value="270288" maxlength="6" />
+        </div>
+        <div class="field">
+          <label for="lc79Bank">Ngân hàng</label>
+          <select id="lc79Bank">
+            <option value="">-- Chọn --</option>
+            <option value="MSB">MSB</option>
+            <option value="VPB">VPBank</option>
+            <option value="PGB">PGbank</option>
+            <option value="VCB">Vietcombank</option>
+            <option value="VIB">VIB</option>
+            <option value="TCB">Techcombank</option>
+            <option value="ACB">ACB</option>
+          </select>
+        </div>
+        <div class="field">
+          <label for="lc79Stk">STK</label>
+          <input id="lc79Stk" type="text" />
+        </div>
+        <div class="field">
+          <label for="lc79Device">Thiết bị</label>
+          <input id="lc79Device" type="text" />
+        </div>
+      </div>
+      <div id="lc79Log" class="modal-log">Nhập username + NickName → Lưu vào LC79 DB (game_data.db).</div>
+      <div class="modal-actions">
+        <button type="button" class="btn-gray" onclick="closeLc79Modal()">Đóng</button>
+        <button type="button" class="btn-primary" id="btnLc79Save" onclick="saveLc79Account()">Lưu vào LC79 DB</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="xoso66Modal" class="modal-backdrop" role="dialog" aria-modal="true">
+    <div class="modal-box">
+      <h3>Đăng ký XOSO66</h3>
+      <p class="modal-sub" id="xoso66ModalProfile">Profile: —</p>
+      <div class="modal-grid">
+        <div class="field">
+          <label for="x66Username">Username *</label>
+          <input id="x66Username" type="text" placeholder="Tài khoản XOSO66" />
+        </div>
+        <div class="field">
+          <label for="x66Password">Mật khẩu đăng nhập *</label>
+          <input id="x66Password" type="text" value="Valentine1" />
+        </div>
+        <div class="field">
+          <label for="x66Phone">SĐT (10 số) *</label>
+          <input id="x66Phone" type="text" maxlength="10" />
+        </div>
+        <div class="field">
+          <label for="x66Holder">Tên đăng ký *</label>
+          <input id="x66Holder" type="text" />
+        </div>
+        <div class="field field-full">
+          <label for="x66Proxy">Proxy *</label>
+          <input id="x66Proxy" type="text" placeholder="host:port:user:pass" />
+        </div>
+        <div class="field">
+          <label for="x66FundPw">MK rút (6 số)</label>
+          <input id="x66FundPw" type="text" value="270288" maxlength="6" />
+        </div>
+        <div class="field">
+          <label for="x66Bank">Ngân hàng</label>
+          <select id="x66Bank">
+            <option value="">-- Chọn --</option>
+            <option value="MSB">MSB</option>
+            <option value="VPB">VPBank</option>
+            <option value="PGB">PGbank</option>
+            <option value="VCB">Vietcombank</option>
+            <option value="VIB">VIB</option>
+            <option value="TCB">Techcombank</option>
+            <option value="ACB">ACB</option>
+          </select>
+        </div>
+        <div class="field">
+          <label for="x66Stk">STK</label>
+          <input id="x66Stk" type="text" />
+        </div>
+        <div class="field">
+          <label for="x66Device">Thiết bị</label>
+          <input id="x66Device" type="text" />
+        </div>
+      </div>
+      <div id="xoso66Log" class="modal-log">Nhập username → Lưu vào xoso66.db hoặc Đăng ký trên site.</div>
+      <div class="modal-actions">
+        <button type="button" class="btn-gray" onclick="closeXoso66Modal()">Đóng</button>
+        <button type="button" class="btn-primary" id="btnXoso66Save" onclick="saveXoso66Account()">Lưu vào XOSO66 DB</button>
+        <button type="button" class="btn-xoso66" id="btnXoso66Run" onclick="runXoso66Provision()">Đăng ký trên XOSO66</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const XOSO66_API = '/xoso66-api';
+    const LC79_ACCOUNTS_API = '/api/accounts';
+    const LC79_DEFAULT_PASSWORD = '123123';
+    const ALLGAME_API = '/api/allgame/accounts';
+    const ALLGAME_PORTALS_API = '/api/allgame/portals';
+    let rows = [];
+    let xoso66Api = { api_reachable: false, api_key: '' };
+    let xoso66ProfileId = null;
+    let lc79ProfileId = null;
+    let allgameProfileId = null;
+    let allgamePortals = [];
+    const XOSO66_STEPS = [
+      { step: 'register', pending: 'Đang đăng ký tài khoản…', ok: 'Đăng ký thành công', fail: 'Đăng ký thất bại' },
+      { step: 'fund_password', pending: 'Đang đặt MK rút…', ok: 'MK rút OK', fail: 'MK rút thất bại' },
+      { step: 'bank_bind', pending: 'Đang liên kết ngân hàng…', ok: 'Liên kết bank OK', fail: 'Liên kết bank thất bại' },
+    ];
+
+    function chromeProfileRow(profileId) {
+      const id = profileId != null ? profileId : (lc79ProfileId ?? xoso66ProfileId);
+      if (!id) return null;
+      return rows.find((x) => x.id === id) || null;
+    }
+
+    /** Proxy đăng ký luôn lấy từ cột Proxy của profile Chrome (không bị DB game ghi đè). */
+    function applyChromeProfileProxy(profileId, inputId) {
+      const row = chromeProfileRow(profileId);
+      const proxy = String(row?.proxy || '').trim();
+      const elId = inputId || 'x66Proxy';
+      if (proxy) {
+        const el = document.getElementById(elId);
+        if (el) el.value = proxy;
+      }
+      return proxy;
+    }
+
+    function escapeHtml(s) {
+      if (s == null) return '';
+      return String(s)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;');
+    }
+
+    function setMsg(elId, text, ok) {
+      const el = document.getElementById(elId);
+      el.textContent = text || '';
+      el.className = 'msg' + (text ? (ok ? ' ok' : ' err') : '');
+    }
+
+    async function loadGlobalConfig() {
+      try {
+        const { data } = await axios.get('/api/chrome-launch-config');
+        if (data.ok) {
+          document.getElementById('globalTabs').value = data.default_startup_urls_text || '';
+        }
+      } catch (e) {
+        setMsg('globalMsg', e.message, false);
+      }
+    }
+
+    async function saveGlobalTabs() {
+      const text = document.getElementById('globalTabs').value;
+      setMsg('globalMsg', 'Đang lưu…', true);
+      try {
+        const { data } = await axios.put('/api/chrome-launch-config', {
+          default_startup_urls_text: text,
+        });
+        if (!data.ok) throw new Error(data.error || 'Lưu thất bại');
+        document.getElementById('globalTabs').value = data.default_startup_urls_text || '';
+        setMsg('globalMsg', 'Đã lưu ' + (data.default_startup_urls?.length || 0) + ' tab mặc định', true);
+      } catch (e) {
+        setMsg('globalMsg', e.message, false);
+      }
+    }
+
+    async function loadList() {
+      setMsg('tableMsg', '', true);
+      try {
+        const { data } = await axios.get('/api/chrome-profiles');
+        if (!data.ok) throw new Error(data.error || 'Lỗi tải danh sách');
+        rows = data.items || [];
+        renderTable();
+      } catch (e) {
+        document.getElementById('dataBody').innerHTML =
+          '<tr><td colspan="10" class="empty">Lỗi: ' + escapeHtml(e.message) + '</td></tr>';
+      }
+    }
+
+    function renderTable() {
+      const body = document.getElementById('dataBody');
+      if (!rows.length) {
+        body.innerHTML = '<tr><td colspan="10" class="empty">Chưa có profile. Tạo mới ở trên.</td></tr>';
+        return;
+      }
+      const fields = [
+        ['device', 'cell-in', 'Thiết bị *'],
+        ['name', 'cell-in', 'Username'],
+        ['phone', 'cell-in', 'SĐT'],
+        ['bank', 'cell-in', 'Ngân hàng'],
+        ['account_number', 'cell-in', 'STK'],
+        ['account_holder', 'cell-in', 'Chủ TK'],
+      ];
+      body.innerHTML = rows.map((r, i) => {
+        const proxyVal = escapeHtml(r.proxy || '');
+        const fldCells = fields.map(([key, cls, ph]) => {
+          const v = escapeHtml(r[key] || '');
+          return `<td><input class="cell-in ${cls}" type="text" value="${v}" data-id="${r.id}" data-field="${key}"
+            placeholder="${ph}" onblur="saveField(this)" onkeydown="cellKeydown(event, this)" /></td>`;
+        }).join('');
+        return `<tr data-id="${r.id}">
+          <td class="center">${i + 1}</td>
+          ${fldCells}
+          <td>
+            <input class="cell-in proxy-cell" type="text" value="${proxyVal}"
+              data-id="${r.id}" data-field="proxy" onblur="saveField(this)" onkeydown="cellKeydown(event, this)" />
+          </td>
+          <td class="center">
+            <div class="game-btns">
+              <button type="button" class="btn-lc79" onclick="openLc79Modal(${r.id})">LC79</button>
+              <button type="button" class="btn-xoso66" onclick="openXoso66Modal(${r.id})">xoso66</button>
+              <button type="button" class="btn-allgame" onclick="openAllgameModal(${r.id})">AllGame</button>
+            </div>
+          </td>
+          <td class="center" style="white-space:nowrap">
+            <button type="button" class="btn-open" onclick="openProfile(${r.id}, this)">Mở</button>
+            <button type="button" class="btn-del" onclick="deleteProfile(${r.id})">Xóa</button>
+          </td>
+        </tr>`;
+      }).join('');
+    }
+
+    function applyRowItem(row, item) {
+      if (!row || !item) return;
+      Object.assign(row, item);
+    }
+
+    function proxySyncHint(sync) {
+      if (!sync) return '';
+      const parts = [];
+      if (sync.lc79) parts.push(`LC79: ${sync.lc79} acc`);
+      if (sync.xoso66) parts.push(`xoso66: ${sync.xoso66} acc`);
+      if (sync.error) parts.push('lỗi đồng bộ: ' + sync.error);
+      return parts.length ? ' — đồng bộ ' + parts.join(', ') : '';
+    }
+
+    function deviceSyncHint(sync) {
+      return proxySyncHint(sync);
+    }
+
+    async function saveField(input) {
+      const id = Number(input.dataset.id);
+      const field = input.dataset.field;
+      const value = input.value.trim();
+      const row = rows.find((x) => x.id === id);
+      if (!row || field === 'proxy') {
+        if (field === 'proxy') return saveProxy(input);
+        return;
+      }
+      if ((row[field] || '') === value) return;
+      if (field === 'device' && !value) {
+        input.value = row.device || '';
+        setMsg('tableMsg', 'Tên thiết bị không được trống', false);
+        return;
+      }
+      try {
+        const { data } = await axios.put(`/api/chrome-profiles/${id}`, { [field]: value });
+        if (!data.ok) throw new Error(data.error || 'Lưu thất bại');
+        applyRowItem(row, data.item);
+        const hint = deviceSyncHint(data.device_sync);
+        setMsg('tableMsg', 'Đã lưu ' + field + ' — ' + (row.device || row.name || id) + hint, true);
+      } catch (e) {
+        input.value = row[field] || '';
+        setMsg('tableMsg', e.message, false);
+      }
+    }
+
+    function cellKeydown(ev, el) {
+      if (ev.key === 'Enter' && el.tagName !== 'TEXTAREA') {
+        ev.preventDefault();
+        el.blur();
+      }
+      if (ev.key === 'Enter' && ev.ctrlKey && el.tagName === 'TEXTAREA') {
+        ev.preventDefault();
+        el.blur();
+      }
+    }
+
+    async function saveProxy(input) {
+      const id = Number(input.dataset.id);
+      const proxy = input.value.trim();
+      const row = rows.find((x) => x.id === id);
+      if (!row || row.proxy === proxy) return;
+      try {
+        const { data } = await axios.put(`/api/chrome-profiles/${id}`, { proxy });
+        if (!data.ok) throw new Error(data.error || 'Lưu thất bại');
+        applyRowItem(row, data.item);
+        setMsg('tableMsg', 'Đã lưu proxy — ' + (row.device || row.name || id) + proxySyncHint(data.proxy_sync), true);
+      } catch (e) {
+        input.value = row.proxy || '';
+        setMsg('tableMsg', e.message, false);
+      }
+    }
+
+    function clearCreateForm() {
+      ['newName', 'newProxy', 'newDevice', 'newPhone', 'newBank', 'newAccountNumber', 'newAccountHolder', 'newTabs']
+        .forEach((id) => {
+          const el = document.getElementById(id);
+          if (el) el.value = '';
+        });
+    }
+
+    async function createProfile() {
+      const name = document.getElementById('newName').value.trim();
+      const proxy = document.getElementById('newProxy').value.trim();
+      const startup_urls_text = document.getElementById('newTabs').value;
+      const device = document.getElementById('newDevice').value.trim();
+      const phone = document.getElementById('newPhone').value.trim();
+      const bank = document.getElementById('newBank').value.trim();
+      const account_number = document.getElementById('newAccountNumber').value.trim();
+      const account_holder = document.getElementById('newAccountHolder').value.trim();
+      if (!device) {
+        setMsg('formMsg', 'Nhập tên thiết bị (bắt buộc, duy nhất)', false);
+        return;
+      }
+      setMsg('formMsg', 'Đang tạo…', true);
+      try {
+        const { data } = await axios.post('/api/chrome-profiles', {
+          name,
+          proxy,
+          startup_urls_text,
+          device,
+          phone,
+          bank,
+          account_number,
+          account_holder,
+        });
+        if (!data.ok) throw new Error(data.error || 'Tạo thất bại');
+        clearCreateForm();
+        setMsg('formMsg', 'Đã tạo profile thiết bị: ' + device + proxySyncHint(data.proxy_sync), true);
+        await loadList();
+      } catch (e) {
+        setMsg('formMsg', e.message, false);
+      }
+    }
+
+    async function openProfile(id, btn) {
+      const row = rows.find((x) => x.id === id);
+      setMsg('tableMsg', 'Đang mở Chrome…', true);
+      if (btn) btn.disabled = true;
+      try {
+        const { data } = await axios.post(`/api/chrome-profiles/${id}/open`, {});
+        if (!data.ok) throw new Error(data.error || 'Mở thất bại');
+        const tabInfo = data.tabs ? ` (${data.tabs} tab)` : '';
+        setMsg('tableMsg', (data.message || 'Đã mở Chrome') + tabInfo, true);
+      } catch (e) {
+        setMsg('tableMsg', e.message, false);
+      } finally {
+        if (btn) btn.disabled = false;
+      }
+    }
+
+    async function deleteProfile(id) {
+      const row = rows.find((x) => x.id === id);
+      if (!confirm('Xóa profile thiết bị "' + (row?.device || row?.name || id) + '"?')) return;
+      try {
+        const { data } = await axios.delete(`/api/chrome-profiles/${id}`);
+        if (!data.ok) throw new Error(data.error || 'Xóa thất bại');
+        setMsg('tableMsg', 'Đã xóa profile', true);
+        await loadList();
+      } catch (e) {
+        setMsg('tableMsg', e.message, false);
+      }
+    }
+
+    function xoso66LogLine(msg) {
+      const box = document.getElementById('xoso66Log');
+      const t = new Date().toLocaleTimeString();
+      box.textContent = t + ' — ' + msg + '\n' + box.textContent;
+    }
+
+    function matchBankOption(bankStr, selectId) {
+      const b = String(bankStr || '').trim().toUpperCase();
+      const sel = document.getElementById(selectId || 'x66Bank');
+      if (!sel) return;
+      if (!b) { sel.value = ''; return; }
+      for (const opt of sel.options) {
+        if (opt.value && b.includes(opt.value)) { sel.value = opt.value; return; }
+      }
+      if (b.includes('VPB') || b.includes('VPBANK')) sel.value = 'VPB';
+      else if (b.includes('PGB') || b.includes('PGBANK') || b.includes('PG_BANK')) sel.value = 'PGB';
+      else if (b.includes('VCB') || b.includes('VIETCOM') || b.includes('VIET_COM')) sel.value = 'VCB';
+      else if (b.includes('MSB')) sel.value = 'MSB';
+      else if (b.includes('VIB')) sel.value = 'VIB';
+      else if (b.includes('TCB') || b.includes('TECHCOM')) sel.value = 'TCB';
+      else if (b.includes('ACB')) sel.value = 'ACB';
+      else sel.value = '';
+    }
+
+    function allgameLogLine(msg) {
+      const box = document.getElementById('allgameLog');
+      const t = new Date().toLocaleTimeString();
+      box.textContent = t + ' — ' + msg + '\n' + box.textContent;
+    }
+
+    function fillAllgamePortalSelect(selectedId) {
+      const sel = document.getElementById('allgamePortal');
+      if (!sel) return;
+      const enabled = allgamePortals.filter((p) => p.enabled);
+      const list = enabled.length ? enabled : allgamePortals;
+      sel.innerHTML = list
+        .map(
+          (p) =>
+            `<option value="${escapeHtml(p.portal_id)}">${escapeHtml(p.display_name || p.portal_id)}</option>`
+        )
+        .join('');
+      const want = String(selectedId || 'c168').toLowerCase();
+      if ([...sel.options].some((o) => o.value === want)) sel.value = want;
+      else if (sel.options.length) sel.selectedIndex = 0;
+    }
+
+    async function loadAllgamePortals() {
+      try {
+        const { data } = await axios.get(ALLGAME_PORTALS_API);
+        allgamePortals = (data && data.items) || [];
+        fillAllgamePortalSelect('c168');
+      } catch (e) {
+        allgamePortals = [
+          { portal_id: 'cm88', display_name: 'CM88', enabled: true },
+          { portal_id: 'fly88', display_name: 'FLY88', enabled: true },
+          { portal_id: 'c168', display_name: 'C168', enabled: true },
+          { portal_id: 'f168', display_name: 'F168', enabled: true },
+          { portal_id: 'sc88', display_name: 'SC88', enabled: true },
+        ];
+        fillAllgamePortalSelect('c168');
+      }
+    }
+
+    async function openAllgameModal(profileId) {
+      const row = rows.find((x) => x.id === profileId);
+      if (!row) return;
+      if (!allgamePortals.length) await loadAllgamePortals();
+      allgameProfileId = profileId;
+      fillAllgamePortalSelect('c168');
+      document.getElementById('allgameModalProfile').textContent =
+        'Profile Chrome: ' + (row.device || row.name || profileId);
+      document.getElementById('allgameUsername').value = String(row.name || '').trim();
+      document.getElementById('allgamePassword').value =
+        xoso66Api.default_login_password || 'Valentine1';
+      document.getElementById('allgamePhone').value = row.phone || '';
+      document.getElementById('allgameHolder').value = row.account_holder || '';
+      document.getElementById('allgameProxy').value = row.proxy || '';
+      document.getElementById('allgameFundPw').value =
+        xoso66Api.default_fund_password || '270288';
+      document.getElementById('allgameStk').value = row.account_number || '';
+      document.getElementById('allgameDevice').value = row.device || '';
+      matchBankOption(row.bank, 'allgameBank');
+      document.getElementById('allgameLog').textContent =
+        'Chọn cổng game + username → Lưu allgame.db (cùng username khác game = 2 bản ghi).';
+      document.getElementById('allgameModal').classList.add('open');
+      const portalId = document.getElementById('allgamePortal').value;
+      const uname = document.getElementById('allgameUsername').value.trim();
+      if (portalId && uname) loadExistingAllgameIntoForm(portalId, uname);
+    }
+
+    function closeAllgameModal() {
+      document.getElementById('allgameModal').classList.remove('open');
+      allgameProfileId = null;
+    }
+
+    function allgamePayloadFromModal() {
+      const bank = document.getElementById('allgameBank').value.trim();
+      return {
+        portal_id: document.getElementById('allgamePortal').value.trim(),
+        username: document.getElementById('allgameUsername').value.trim(),
+        password: document.getElementById('allgamePassword').value.trim(),
+        phone: document.getElementById('allgamePhone').value.trim(),
+        account_holder: document.getElementById('allgameHolder').value.trim(),
+        proxy: document.getElementById('allgameProxy').value.trim(),
+        fund_password: document.getElementById('allgameFundPw').value.trim(),
+        bank_code: bank,
+        bank_name: bank,
+        account_number: document.getElementById('allgameStk').value.trim(),
+        device: document.getElementById('allgameDevice').value.trim(),
+        status: 'new',
+      };
+    }
+
+    async function findAllgameAccount(portalId, username) {
+      const pid = String(portalId || '').trim().toLowerCase();
+      const u = String(username || '').trim();
+      if (!pid || !u) return null;
+      try {
+        const { data } = await axios.get(
+          ALLGAME_API + '/' + encodeURIComponent(pid) + '/' + encodeURIComponent(u)
+        );
+        return data && data.portal_id ? data : null;
+      } catch (e) {
+        if (e.response && e.response.status === 404) return null;
+        throw e;
+      }
+    }
+
+    async function loadExistingAllgameIntoForm(portalId, username) {
+      try {
+        const acc = await findAllgameAccount(portalId, username);
+        if (!acc) return;
+        allgameLogLine('Da co trong DB — nap lai form (' + acc.portal_id + '/' + acc.username + ')');
+        if (acc.password && acc.password !== '••••') {
+          document.getElementById('allgamePassword').value = acc.password;
+        }
+        document.getElementById('allgamePhone').value = acc.phone || '';
+        document.getElementById('allgameHolder').value = acc.account_holder || '';
+        document.getElementById('allgameProxy').value = acc.proxy || '';
+        if (acc.fund_password && acc.fund_password !== '••••') {
+          document.getElementById('allgameFundPw').value = acc.fund_password;
+        }
+        document.getElementById('allgameStk').value = acc.account_number || '';
+        document.getElementById('allgameDevice').value = acc.device || '';
+        matchBankOption(acc.bank_code || acc.bank_name, 'allgameBank');
+      } catch (e) {
+        allgameLogLine('Khong doc duoc ban ghi cu: ' + e.message);
+      }
+    }
+
+    document.getElementById('allgamePortal')?.addEventListener('change', () => {
+      const portalId = document.getElementById('allgamePortal').value;
+      const uname = document.getElementById('allgameUsername').value.trim();
+      if (portalId && uname) loadExistingAllgameIntoForm(portalId, uname);
+    });
+
+    async function saveAllgameAccount() {
+      const body = allgamePayloadFromModal();
+      if (!body.portal_id) { alert('Chon cong game'); return; }
+      if (!body.username) { alert('Nhap username'); return; }
+      const btn = document.getElementById('btnAllgameSave');
+      btn.disabled = true;
+      try {
+        allgameLogLine('Dang luu ' + body.portal_id + ' / ' + body.username + ' …');
+        const existing = await findAllgameAccount(body.portal_id, body.username);
+        if (existing) {
+          const { data } = await axios.put(
+            ALLGAME_API +
+              '/' +
+              encodeURIComponent(body.portal_id) +
+              '/' +
+              encodeURIComponent(body.username),
+            body
+          );
+          allgameLogLine(
+            'OK cap nhat: ' + (data.session_key || body.portal_id + ':' + body.username)
+          );
+        } else {
+          const { data } = await axios.post(ALLGAME_API, body);
+          allgameLogLine(
+            'OK them moi: ' + (data.session_key || body.portal_id + ':' + body.username)
+          );
+        }
+      } catch (e) {
+        const d = e.response?.data;
+        const err = (d && (d.error || d.detail)) || e.message;
+        allgameLogLine('Loi: ' + err);
+      } finally {
+        btn.disabled = false;
+      }
+    }
+
+    function lc79LogLine(msg) {
+      const box = document.getElementById('lc79Log');
+      const t = new Date().toLocaleTimeString();
+      box.textContent = t + ' — ' + msg + '\n' + box.textContent;
+    }
+
+    function openLc79Modal(profileId) {
+      const row = rows.find((x) => x.id === profileId);
+      if (!row) return;
+      lc79ProfileId = profileId;
+      document.getElementById('lc79ModalProfile').textContent =
+        'Profile Chrome: ' + (row.device || row.name || profileId);
+      document.getElementById('lc79Username').value = String(row.name || '').trim();
+      document.getElementById('lc79Nickname').value = '';
+      document.getElementById('lc79Password').value = LC79_DEFAULT_PASSWORD;
+      document.getElementById('lc79Phone').value = row.phone || '';
+      document.getElementById('lc79Holder').value = row.account_holder || '';
+      document.getElementById('lc79Proxy').value = row.proxy || '';
+      document.getElementById('lc79FundPw').value =
+        xoso66Api.default_fund_password || '270288';
+      document.getElementById('lc79Stk').value = row.account_number || '';
+      document.getElementById('lc79Device').value = row.device || '';
+      matchBankOption(row.bank, 'lc79Bank');
+      document.getElementById('lc79Log').textContent =
+        'Sẵn sàng — Lưu vào LC79 DB (accounts + user_profiles).';
+      document.getElementById('lc79Modal').classList.add('open');
+      const uname = document.getElementById('lc79Username').value.trim();
+      if (uname) loadExistingLc79IntoForm(uname);
+    }
+
+    function closeLc79Modal() {
+      document.getElementById('lc79Modal').classList.remove('open');
+      lc79ProfileId = null;
+    }
+
+    function lc79PayloadFromModal() {
+      const bank = document.getElementById('lc79Bank').value.trim();
+      return {
+        game: 'LC79',
+        username: document.getElementById('lc79Username').value.trim(),
+        nickname: document.getElementById('lc79Nickname').value.trim(),
+        loginPass: document.getElementById('lc79Password').value.trim(),
+        phone: document.getElementById('lc79Phone').value.trim(),
+        accountHolder: document.getElementById('lc79Holder').value.trim(),
+        proxy: document.getElementById('lc79Proxy').value.trim(),
+        withdrawPass: document.getElementById('lc79FundPw').value.trim(),
+        bank,
+        accountNumber: document.getElementById('lc79Stk').value.trim(),
+        device: document.getElementById('lc79Device').value.trim(),
+        status: 'Mới Tạo',
+      };
+    }
+
+    async function findLc79Account(username) {
+      const u = String(username || '').trim();
+      if (!u) return null;
+      try {
+        const { data } = await axios.get(
+          LC79_ACCOUNTS_API + '/' + encodeURIComponent(u)
+        );
+        if (!data || String(data.game || '').toUpperCase() !== 'LC79') return null;
+        return data;
+      } catch (e) {
+        if (e.response && e.response.status === 404) return null;
+        throw e;
+      }
+    }
+
+    async function loadExistingLc79IntoForm(username) {
+      try {
+        const acc = await findLc79Account(username);
+        if (!acc) return;
+        lc79LogLine('Đã có trong DB — nạp lại form (' + (acc.username || acc.id) + ')');
+        if (acc.nickname) document.getElementById('lc79Nickname').value = acc.nickname;
+        if (acc.loginPass) document.getElementById('lc79Password').value = acc.loginPass;
+        document.getElementById('lc79Phone').value = acc.phone || '';
+        document.getElementById('lc79Holder').value = acc.accountHolder || '';
+        if (!applyChromeProfileProxy(lc79ProfileId, 'lc79Proxy')) {
+          document.getElementById('lc79Proxy').value = acc.proxy || '';
+        }
+        if (acc.withdrawPass) document.getElementById('lc79FundPw').value = acc.withdrawPass;
+        document.getElementById('lc79Stk').value = acc.accountNumber || '';
+        document.getElementById('lc79Device').value = acc.device || '';
+        matchBankOption(acc.bank, 'lc79Bank');
+      } catch (e) {
+        lc79LogLine('Không đọc được bản ghi cũ: ' + e.message);
+      }
+    }
+
+    async function saveLc79Account() {
+      applyChromeProfileProxy(lc79ProfileId, 'lc79Proxy');
+      const body = lc79PayloadFromModal();
+      if (!body.username) {
+        alert('Nhập username LC79');
+        return;
+      }
+      if (!body.nickname) {
+        alert('Nhập NickName LC79');
+        return;
+      }
+      const btn = document.getElementById('btnLc79Save');
+      btn.disabled = true;
+      try {
+        lc79LogLine('Đang lưu ' + body.username + ' vào LC79 DB…');
+        const existing = await findLc79Account(body.username);
+        if (existing) {
+          const { data } = await axios.put(
+            LC79_ACCOUNTS_API + '/' + encodeURIComponent(body.username),
+            body
+          );
+          lc79LogLine('OK cập nhật: ' + (data.username || body.username));
+        } else {
+          const { data } = await axios.post(LC79_ACCOUNTS_API, body);
+          lc79LogLine(
+            'OK thêm mới: ' + (data.account?.username || body.username)
+          );
+        }
+      } catch (e) {
+        const d = e.response?.data;
+        const err = (d && (d.error || d.detail)) || e.message;
+        lc79LogLine('Lỗi: ' + err);
+      } finally {
+        btn.disabled = false;
+      }
+    }
+
+    function openXoso66Modal(profileId) {
+      const row = rows.find((x) => x.id === profileId);
+      if (!row) return;
+      xoso66ProfileId = profileId;
+      document.getElementById('xoso66ModalProfile').textContent =
+        'Profile Chrome: ' + (row.device || row.name || profileId);
+      document.getElementById('x66Username').value = String(row.name || '').trim();
+      document.getElementById('x66Password').value =
+        xoso66Api.default_login_password || 'Valentine1';
+      document.getElementById('x66Phone').value = row.phone || '';
+      document.getElementById('x66Holder').value = row.account_holder || '';
+      document.getElementById('x66Proxy').value = row.proxy || '';
+      document.getElementById('x66FundPw').value =
+        xoso66Api.default_fund_password || '270288';
+      document.getElementById('x66Stk').value = row.account_number || '';
+      document.getElementById('x66Device').value = row.device || '';
+      matchBankOption(row.bank, 'x66Bank');
+      document.getElementById('xoso66Log').textContent = xoso66Api.api_reachable
+        ? 'Sẵn sàng — Lưu DB hoặc Đăng ký qua ' + XOSO66_API
+        : '⚠ Đang khởi động XOSO66 API…';
+      document.getElementById('xoso66Modal').classList.add('open');
+      const uname = document.getElementById('x66Username').value.trim();
+      if (uname) loadExistingXoso66IntoForm(uname);
+    }
+
+    function closeXoso66Modal() {
+      document.getElementById('xoso66Modal').classList.remove('open');
+      xoso66ProfileId = null;
+    }
+
+    function xoso66Headers() {
+      const headers = { 'Content-Type': 'application/json' };
+      if (xoso66Api.api_key) headers['X-API-Key'] = xoso66Api.api_key;
+      return headers;
+    }
+
+    function xoso66PayloadFromModal() {
+      const bank = document.getElementById('x66Bank').value.trim();
+      return {
+        username: document.getElementById('x66Username').value.trim(),
+        password: document.getElementById('x66Password').value.trim(),
+        phone: document.getElementById('x66Phone').value.trim(),
+        account_holder: document.getElementById('x66Holder').value.trim(),
+        proxy: document.getElementById('x66Proxy').value.trim(),
+        fund_password: document.getElementById('x66FundPw').value.trim(),
+        bank: bank,
+        bank_code: bank,
+        bank_name: bank,
+        account_number: document.getElementById('x66Stk').value.trim(),
+        device: document.getElementById('x66Device').value.trim(),
+        status: 'new',
+      };
+    }
+
+    async function findXoso66Account(username) {
+      const u = String(username || '').trim();
+      if (!u) return null;
+      try {
+        const { data } = await axios.get(XOSO66_API + '/api/accounts?secrets=true', {
+          headers: xoso66Headers(),
+        });
+        const rows = Array.isArray(data) ? data : [];
+        return (
+          rows.find((r) => String(r.username || '').toLowerCase() === u.toLowerCase()) || null
+        );
+      } catch (e) {
+        if (e.response && e.response.status === 404) return null;
+        throw e;
+      }
+    }
+
+    async function loadExistingXoso66IntoForm(username) {
+      try {
+        const acc = await findXoso66Account(username);
+        if (!acc) return;
+        xoso66LogLine('Đã có trong DB — nạp lại form (' + (acc.username || acc.id) + ')');
+        if (acc.password && acc.password !== '******' && acc.password !== '••••') {
+          document.getElementById('x66Password').value = acc.password;
+        }
+        document.getElementById('x66Phone').value = acc.phone || '';
+        document.getElementById('x66Holder').value = acc.account_holder || '';
+        if (!applyChromeProfileProxy(xoso66ProfileId, 'x66Proxy')) {
+          document.getElementById('x66Proxy').value = acc.proxy || '';
+        }
+        if (acc.fund_password && acc.fund_password !== '******' && acc.fund_password !== '••••') {
+          document.getElementById('x66FundPw').value = acc.fund_password;
+        }
+        document.getElementById('x66Stk').value = acc.account_number || '';
+        document.getElementById('x66Device').value = acc.device || '';
+        matchBankOption(acc.bank_code || acc.bank_name || acc.bank, 'x66Bank');
+      } catch (e) {
+        xoso66LogLine('Không đọc được bản ghi cũ: ' + e.message);
+      }
+    }
+
+    async function saveXoso66Account() {
+      const body = xoso66PayloadFromModal();
+      if (!body.username) {
+        alert('Nhập username XOSO66');
+        return;
+      }
+      if (!xoso66Api.api_reachable) {
+        alert('XOSO66 API chưa sẵn sàng. Đợi vài giây rồi thử lại.');
+        return;
+      }
+      const btn = document.getElementById('btnXoso66Save');
+      btn.disabled = true;
+      try {
+        xoso66LogLine('Đang lưu ' + body.username + ' vào xoso66.db…');
+        const existing = await findXoso66Account(body.username);
+        const headers = xoso66Headers();
+        if (existing) {
+          const { data } = await axios.put(
+            XOSO66_API + '/api/accounts/' + encodeURIComponent(existing.id) + '?secrets=1',
+            body,
+            { headers }
+          );
+          xoso66LogLine('OK cập nhật: ' + (data.username || existing.id));
+        } else {
+          const { data } = await axios.post(XOSO66_API + '/api/accounts', body, { headers });
+          xoso66LogLine('OK thêm mới: ' + (data.username || data.id || body.username));
+        }
+      } catch (e) {
+        const d = e.response?.data;
+        const err = (d && (d.error || d.detail)) || e.message;
+        xoso66LogLine('Lỗi: ' + err);
+      } finally {
+        btn.disabled = false;
+      }
+    }
+
+    async function runXoso66Provision() {
+      const chromeProxy = applyChromeProfileProxy(xoso66ProfileId, 'x66Proxy');
+      const body = xoso66PayloadFromModal();
+      if (chromeProxy) body.proxy = chromeProxy;
+      if (!body.username) { alert('Nhập username XOSO66'); return; }
+      if (!body.password) { alert('Nhập mật khẩu'); return; }
+      if (!body.phone || body.phone.length !== 10) { alert('SĐT phải 10 chữ số'); return; }
+      if (!body.account_holder) { alert('Nhập tên đăng ký (Chủ TK)'); return; }
+      if (!body.proxy) {
+        alert('Proxy bắt buộc — nhập proxy ở cột Proxy của profile Chrome (host:port:user:pass)');
+        return;
+      }
+      if (!xoso66Api.api_reachable) {
+        alert('XOSO66 API chưa sẵn sàng. Đợi vài giây rồi thử lại (CMS đang khởi động nền).');
+        return;
+      }
+      const btn = document.getElementById('btnXoso66Run');
+      btn.disabled = true;
+      let accountId = null;
+      try {
+        for (const ui of XOSO66_STEPS) {
+          if (ui.step === 'fund_password' && !body.fund_password) continue;
+          if (ui.step === 'bank_bind' && !body.account_number) continue;
+          xoso66LogLine(ui.pending);
+          const payload = { ...body, step: ui.step };
+          if (accountId) payload.account_id = accountId;
+          const { data } = await axios.post(XOSO66_API + '/api/accounts/provision', payload, {
+            headers: xoso66Headers(),
+            timeout: 600000,
+          });
+          if (data.skipped) {
+            xoso66LogLine('⊘ ' + (data.steps?.[0]?.msg || 'Đã có trong DB'));
+            if (data.account_id) accountId = data.account_id;
+            break;
+          }
+          const st = (data.steps || []).find((s) => s.step === ui.step) || data.steps?.[0];
+          if (data.account_id) accountId = data.account_id;
+          if (data.ok && st && (st.ok || st.skipped)) {
+            xoso66LogLine(st.skipped ? ('⊘ ' + (st.msg || ui.ok)) : ui.ok);
+          } else {
+            xoso66LogLine(ui.fail + (st?.msg ? ': ' + st.msg : ''));
+            break;
+          }
+        }
+        if (accountId) xoso66LogLine('account_id: ' + accountId);
+      } catch (e) {
+        const d = e.response?.data;
+        const err = (d && (d.error || d.detail)) || e.message;
+        xoso66LogLine('Lỗi: ' + err);
+      } finally {
+        btn.disabled = false;
+      }
+    }
+
+    async function loadXoso66Api() {
+      try {
+        const health = await axios.get(XOSO66_API + '/api/health', { timeout: 4000 });
+        const cfg = await axios.get(XOSO66_API + '/api/ui-config', { timeout: 4000 });
+        xoso66Api = {
+          api_reachable: health.data?.status === 'ok',
+          api_key: cfg.data?.api_key || '',
+          default_login_password: cfg.data?.default_login_password || 'Valentine1',
+          default_fund_password: cfg.data?.default_fund_password || '270288',
+        };
+      } catch (_) {
+        xoso66Api = { api_reachable: false, api_key: '' };
+      }
+    }
+
+    document.getElementById('lc79Username')?.addEventListener('blur', () => {
+      const uname = document.getElementById('lc79Username').value.trim();
+      if (uname) loadExistingLc79IntoForm(uname);
+    });
+    document.getElementById('x66Username')?.addEventListener('blur', () => {
+      const uname = document.getElementById('x66Username').value.trim();
+      if (uname) loadExistingXoso66IntoForm(uname);
+    });
+    document.getElementById('lc79Modal').addEventListener('click', (ev) => {
+      if (ev.target.id === 'lc79Modal') closeLc79Modal();
+    });
+    document.getElementById('xoso66Modal').addEventListener('click', (ev) => {
+      if (ev.target.id === 'xoso66Modal') closeXoso66Modal();
+    });
+    document.getElementById('allgameModal').addEventListener('click', (ev) => {
+      if (ev.target.id === 'allgameModal') closeAllgameModal();
+    });
+
+    loadGlobalConfig();
+    loadAllgamePortals();
+    loadXoso66Api();
+    loadList();
+  </script>
+</body>
+</html>

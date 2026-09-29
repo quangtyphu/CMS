@@ -201,22 +201,30 @@ document.getElementById("userForm").addEventListener("submit", async e => {
   e.preventDefault();
   const payload = readForm();
 
-  if (!editing) {
-    await fetch("/api/users", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload)
-    });
-  } else {
-    await fetch(`/api/users/${editingUser}`, {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload)
-    });
+  try {
+    let res;
+    if (!editing) {
+      res = await fetch("/api/users", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload)
+      });
+    } else {
+      res = await fetch(`/api/users/${encodeURIComponent(editingUser)}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload)
+      });
+    }
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.error || err.message || ("HTTP " + res.status));
+    }
+    resetForm();
+    loadUsers();
+  } catch (err) {
+    alert("Lưu thất bại: " + (err.message || err));
   }
-
-  resetForm();
-  loadUsers();
 });
 
 document.addEventListener("click", async e => {

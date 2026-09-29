@@ -31,6 +31,35 @@ body {
   background-color: #34495e;
 }
 
+.menu-group {
+  margin-bottom: 8px;
+}
+
+.menu-parent {
+  font-weight: bold;
+  background-color: #1a252f;
+}
+
+.menu-parent .caret {
+  float: right;
+  font-size: 12px;
+}
+
+.menu-children {
+  margin-left: 8px;
+  border-left: 2px solid #34495e;
+  padding-left: 4px;
+}
+
+.menu-children a {
+  font-size: 14px;
+  padding: 8px 10px;
+}
+
+.menu-children.hidden {
+  display: none;
+}
+
 /* Nội dung bên phải */
 .content {
   flex: 1;

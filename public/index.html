@@ -3,38 +3,98 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>CMS - Website 2 cột</title>
+  <title>CMS</title>
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
-  <!-- Sidebar bên trái -->
   <div class="sidebar">
-    <h2>Menu</h2>
-    <a onclick="loadPage('accounts.html')">Thêm Tài Khoản</a>
-    <a onclick="loadPage('QuanLyLC79_All.html')">Quản Lý Tài Khoản </a>
-    <a onclick="loadPage('NhiemVu.html')">Nhiệm Vụ</a>
-    <a onclick="loadPage('DepositOrders.html')">Quản Lý Lệnh Nạp </a>
-    <a onclick="loadPage('history.html')">Quản Lý Lệnh Rút</a>
-    <a onclick="loadPage('daily_profits.html')">Lợi Nhuận</a>
-    <a onclick="loadPage('transaction_profits.html')">Lợi Nhuận Giao Dịch</a>
-    <a onclick="loadPage('soduTK.html')">Số Dư Tài Khoản</a>
-    <a onclick="loadPage('gift_box_history.html')">Lịch Sử Hòm Quà</a>
-    <a onclick="loadPage('gift_box_stats.html')">Thống Kê Hòm Quà</a>
-    <a onclick="loadPage('jackpot_stats.html')">Thống Kê Nổ Hũ</a>
+    <h2>CMS</h2>
 
-    <a onclick="loadPage('CommandRunner.html')">🚀 Khởi Chạy Lệnh</a>
-    <a onclick="loadPage('config.html')">⚙️ Cấu Hình</a>
+    <div class="menu-group">
+      <a class="menu-parent" href="#" onclick="toggleMenu('lc79', event)">LC79 <span class="caret" id="caret-lc79">▾</span></a>
+      <div id="menu-lc79" class="menu-children">
+        <a onclick="loadPage('accounts.html')">Thêm Tài Khoản</a>
+        <a onclick="loadPage('QuanLyLC79_All.html')">Quản Lý Tài Khoản</a>
+        <a onclick="loadPage('NhiemVu.html')">Nhiệm Vụ</a>
+        <a onclick="loadPage('DepositOrders.html')">Quản Lý Lệnh Nạp</a>
+        <a onclick="loadPage('history.html')">Quản Lý Lệnh Rút</a>
+        <a onclick="loadPage('daily_profits.html')">Lợi Nhuận</a>
+        <a onclick="loadPage('gift_box_history.html')">Lịch Sử Hòm Quà</a>
+        <a onclick="loadPage('gift_box_stats.html')">Thống Kê Hòm Quà</a>
+        <a onclick="loadPage('jackpot_stats.html')">Thống Kê Nổ Hũ</a>
+        <a onclick="loadPage('QuanLyChrome.html')">Quản Lý Chrome</a>
+        <a onclick="loadPage('config.html')">Cấu Hình</a>
+      </div>
+    </div>
+
+    <div class="menu-group">
+      <a class="menu-parent" href="#" onclick="toggleMenu('xoso66', event)">XOSO66 <span class="caret" id="caret-xoso66">▾</span></a>
+      <div id="menu-xoso66" class="menu-children">
+        <a onclick="loadXoso66()">Quản lý tài khoản</a>
+        <a onclick="loadPage('config.html?target=xoso66')">Cấu Hình</a>
+      </div>
+    </div>
+
+    <div class="menu-group">
+      <a class="menu-parent" href="#" onclick="toggleMenu('allgame', event)">AllGame <span class="caret" id="caret-allgame">▾</span></a>
+      <div id="menu-allgame" class="menu-children">
+        <a onclick="loadPage('QuanLyAllGame.html')">Quản lý tài khoản</a>
+      </div>
+    </div>
   </div>
 
-  <!-- Nội dung bên phải -->
   <div class="content">
     <iframe id="mainFrame" src="QuanLyLC79_All.html"></iframe>
   </div>
 
   <script>
+    /** XOSO66 — API Node trong CMS (/xoso66-api), không cần python :8799 */
+    const XOSO66_UI = "/xoso66-api/";
+
     function loadPage(page) {
       document.getElementById("mainFrame").src = page;
     }
+
+    async function loadXoso66() {
+      const frame = document.getElementById("mainFrame");
+      frame.srcdoc =
+        "<p style='font-family:sans-serif;padding:16px'>Đang mở XOSO66…</p>";
+      try {
+        const r = await fetch(XOSO66_UI + "api/health");
+        const j = await r.json().catch(() => ({}));
+        if (!r.ok || j.status !== "ok") {
+          frame.srcdoc =
+            "<div style='font-family:sans-serif;padding:16px;max-width:640px'>" +
+            "<h3>XOSO66 API chưa sẵn sàng</h3>" +
+            "<p>Chạy <code>node server.js</code> trong thư mục CMS.</p>" +
+            "<p><button onclick=\"parent.loadXoso66()\">Thử lại</button></p></div>";
+          return;
+        }
+      } catch (e) {
+        frame.srcdoc =
+          "<p style='font-family:sans-serif;padding:16px'>Lỗi: " +
+          (e.message || e) +
+          "</p>";
+        return;
+      }
+      frame.removeAttribute("srcdoc");
+      frame.src = XOSO66_UI;
+    }
+
+    function toggleMenu(id, ev) {
+      if (ev) ev.preventDefault();
+      const el = document.getElementById("menu-" + id);
+      const caret = document.getElementById("caret-" + id);
+      if (!el) return;
+      const hidden = el.classList.toggle("hidden");
+      if (caret) caret.textContent = hidden ? "▸" : "▾";
+    }
+
+    document.addEventListener("DOMContentLoaded", function () {
+      document.getElementById("menu-lc79").classList.remove("hidden");
+      document.getElementById("menu-xoso66").classList.remove("hidden");
+      document.getElementById("menu-allgame").classList.remove("hidden");
+    });
   </script>
 </body>
 </html>

@@ -68,8 +68,11 @@
       <div class="form-row">
         <input type="text" id="device" placeholder="Tên Device" required>
         <input type="number" id="balance" placeholder="Số dư" required>
+        <input type="number" id="nhanNgay" placeholder="Nhận Ngày" min="0">
+        <input type="number" id="chuyenNgay" placeholder="Chuyển Ngày" min="0">
         <input type="text" id="bank" placeholder="Ngân hàng">               <!-- 🆕 -->
         <input type="text" id="username" placeholder="Tên đăng nhập">       <!-- 🆕 -->
+        <input type="password" id="password" placeholder="Mật khẩu" autocomplete="new-password">
         <input type="text" id="accountNumber" placeholder="STK ngân hàng">
         <input type="text" id="accountHolder" placeholder="Chủ tài khoản">
         <button type="submit" class="btn" id="submitBtn">Thêm Device</button>
@@ -95,8 +98,11 @@
           <th>STT</th>
           <th>Device</th>
           <th>Số dư</th>
+          <th>Nhận Ngày</th>
+          <th>Chuyển Ngày</th>
           <th>Ngân hàng</th>        <!-- 🆕 -->
           <th>Tên đăng nhập</th>
+          <th>Mật khẩu</th>
           <th>STK</th>
           <th>Chủ tài khoản</th>
           <th>Sửa</th>
@@ -128,8 +134,11 @@ function renderDevices(list) {
     totalBalance += item.balance || 0; // 🆕 cộng dồn
     const deviceValue = item.device || "";
     const balanceValue = item.balance || 0;
+    const nhanNgayValue = Number(item.nhanNgay || 0);
+    const chuyenNgayValue = Number(item.chuyenNgay || 0);
     const bankValue = item.bank || "";
     const usernameValue = item.username || "";
+    const passwordValue = item.password || "";
     const accountNumberValue = item.accountNumber || "";
     const accountHolderValue = item.accountHolder || "";
     
@@ -142,8 +151,19 @@ function renderDevices(list) {
             ${balanceValue.toLocaleString('vi-VN')} đ
           </span>
         </td>
+        <td>
+          <span class="editable-balance" data-device="${item.device}" data-field="nhanNgay">
+            ${nhanNgayValue.toLocaleString('vi-VN')} đ
+          </span>
+        </td>
+        <td>
+          <span class="editable-balance" data-device="${item.device}" data-field="chuyenNgay">
+            ${chuyenNgayValue.toLocaleString('vi-VN')} đ
+          </span>
+        </td>
         <td>${bankValue || "---"}</td>
         <td>${usernameValue || "---"}</td>
+        <td>${passwordValue ? "••••" : "---"}</td>
         <td>${accountNumberValue || "---"}</td>
         <td>${accountHolderValue || "---"}</td>
         <td><button class="btn edit-btn" data-device="${item.device}">Sửa</button></td>
@@ -183,8 +203,11 @@ function readForm() {
   return {
     device: document.getElementById("device").value,
     balance: Number(document.getElementById("balance").value),
+    nhanNgay: Number(document.getElementById("nhanNgay").value || 0),
+    chuyenNgay: Number(document.getElementById("chuyenNgay").value || 0),
     bank: document.getElementById("bank").value,             // 🆕 thêm
     username: document.getElementById("username").value,     // 🆕 thêm
+    password: document.getElementById("password").value,
     accountNumber: document.getElementById("accountNumber").value,
     accountHolder: document.getElementById("accountHolder").value
   };
@@ -193,8 +216,11 @@ function readForm() {
 function fillForm(item) {
   document.getElementById("device").value = item.device || "";
   document.getElementById("balance").value = item.balance || 0;
+  document.getElementById("nhanNgay").value = item.nhanNgay || 0;
+  document.getElementById("chuyenNgay").value = item.chuyenNgay || 0;
   document.getElementById("bank").value = item.bank || "";               // 🆕
   document.getElementById("username").value = item.username || "";       // 🆕
+  document.getElementById("password").value = item.password || "";
   document.getElementById("accountNumber").value = item.accountNumber || "";
   document.getElementById("accountHolder").value = item.accountHolder || "";
 }
@@ -265,12 +291,13 @@ document.addEventListener("click", async (e) => {
   }
 });
 
-// ================= INLINE EDIT BALANCE ONLY =================
+// ================= INLINE EDIT BALANCE / NHẬN NGÀY / CHUYỂN NGÀY =================
 document.addEventListener('click', function(e) {
   if (!e.target.classList.contains('editable-balance')) return;
 
   const span = e.target;
   const device = span.dataset.device;
+  const field = span.dataset.field || 'balance';
   const oldValue = span.innerText.trim().replace(/\s*đ$/, '').replace(/\./g, ''); // Remove " đ" and dots
 
   const input = document.createElement('input');
@@ -290,15 +317,19 @@ document.addEventListener('click', function(e) {
     const res = await fetch(`/api/device-balances/${device}`);
     const currentData = await res.json();
     
-    // Update only balance field
+    // Update only the edited field
     const updatedData = {
       device: currentData.device || "",
-      balance: Number(newValue || 0),
+      balance: Number(currentData.balance || 0),
+      nhanNgay: Number(currentData.nhanNgay || 0),
+      chuyenNgay: Number(currentData.chuyenNgay || 0),
       bank: currentData.bank || "",
       username: currentData.username || "",
+      password: currentData.password || "",
       accountNumber: currentData.accountNumber || "",
       accountHolder: currentData.accountHolder || ""
     };
+    updatedData[field] = Number(newValue || 0);
 
     try {
       const updateRes = await fetch(`/api/device-balances/${device}`, {

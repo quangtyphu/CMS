@@ -1,0 +1,177 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Quản Lý Slot</title>
+  <script src="https://cdn.jsdelivr.net/npm/axios/dist/axios.min.js"></script>
+  <style>
+    :root { --blue: #3498db; --gray: #f7f8fa; --text: #2c3e50; }
+    body { font-family: Arial, sans-serif; background: var(--gray); margin: 0; padding: 20px; color: var(--text); }
+    h1 { margin: 0 0 14px; font-size: 1.35rem; }
+    .filter-bar { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin-bottom: 14px; }
+    .filter-bar label { font-weight: 600; }
+    .filter-bar input { padding: 7px 10px; border: 1px solid #ccc; border-radius: 4px; font-size: 14px; min-width: 160px; }
+    .filter-bar button {
+      padding: 7px 14px; border: none; border-radius: 4px; background: var(--blue); color: #fff;
+      cursor: pointer; font-size: 14px;
+    }
+    .filter-bar button:hover { background: #2980b9; }
+    .meta { font-size: 13px; color: #555; margin-bottom: 10px; line-height: 1.45; }
+    table { width: 100%; border-collapse: collapse; background: #fff; border-radius: 8px; overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,.08); }
+    th, td { border: 1px solid #e8e8e8; padding: 10px 8px; font-size: 13px; text-align: left; vertical-align: middle; }
+    th { background: var(--blue); color: #fff; text-align: center; white-space: nowrap; }
+    td.num { text-align: right; font-variant-numeric: tabular-nums; }
+    td.center { text-align: center; }
+    tr:nth-child(even) { background: #fafafa; }
+    #pagination { margin-top: 14px; display: flex; flex-wrap: wrap; gap: 8px; align-items: center; justify-content: center; }
+    #pagination button {
+      padding: 6px 11px; border: 1px solid #ccc; background: #fff; cursor: pointer; border-radius: 4px;
+    }
+    #pagination button:disabled { opacity: 0.45; cursor: not-allowed; }
+    #pagination span { font-size: 13px; color: #555; }
+  </style>
+</head>
+<body>
+  <h1>Quản Lý Slot</h1>
+
+  <div class="filter-bar">
+    <label for="vnDay">Ngày (VN +7)</label>
+    <input id="vnDay" type="date" />
+    <label for="filterUser">Username</label>
+    <input id="filterUser" type="text" placeholder="Lọc gần đúng (tuỳ chọn)" />
+    <button type="button" onclick="loadPage(0)">Tải dữ liệu</button>
+  </div>
+  <div class="meta" id="meta"></div>
+
+  <table>
+    <thead>
+      <tr>
+        <th>STT</th>
+        <th>Username</th>
+        <th>Tên game</th>
+        <th>Số lần quay</th>
+        <th>Số biểu tượng<br><span style="font-weight:400;font-size:11px">symbol_count</span></th>
+        <th>Nhận thưởng</th>
+        <th>Lợi nhuận</th>
+      </tr>
+    </thead>
+    <tbody id="dataBody"></tbody>
+  </table>
+
+  <div id="pagination"></div>
+
+  <script>
+    const limit = 100;
+    let total = 0;
+    let offset = 0;
+
+    function escapeHtml(s) {
+      if (s == null) return '';
+      return String(s)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;');
+    }
+
+    function formatNum(n) {
+      const x = Number(n);
+      if (!Number.isFinite(x)) return '—';
+      return x.toLocaleString('vi-VN');
+    }
+
+    function todayVNDate() {
+      const tz = 'Asia/Ho_Chi_Minh';
+      try {
+        const fmt = new Intl.DateTimeFormat('en-CA', { timeZone: tz, year: 'numeric', month: '2-digit', day: '2-digit' });
+        const parts = fmt.formatToParts(new Date());
+        const y = parts.find((p) => p.type === 'year')?.value;
+        const m = parts.find((p) => p.type === 'month')?.value;
+        const d = parts.find((p) => p.type === 'day')?.value;
+        if (y && m && d) return `${y}-${m}-${d}`;
+      } catch (_) {}
+      return new Date().toISOString().slice(0, 10);
+    }
+
+    function renderPagination() {
+      const el = document.getElementById('pagination');
+      el.innerHTML = '';
+      const pages = Math.ceil(total / limit) || 1;
+      const cur = Math.floor(offset / limit) + 1;
+
+      const prev = document.createElement('button');
+      prev.type = 'button';
+      prev.textContent = '← Trước';
+      prev.disabled = offset <= 0;
+      prev.onclick = () => loadPage(Math.max(0, offset - limit));
+      el.appendChild(prev);
+
+      const info = document.createElement('span');
+      info.textContent = `Trang ${cur} / ${pages} — ${total} dòng`;
+      el.appendChild(info);
+
+      const next = document.createElement('button');
+      next.type = 'button';
+      next.textContent = 'Sau →';
+      next.disabled = offset + limit >= total;
+      next.onclick = () => loadPage(offset + limit);
+      el.appendChild(next);
+    }
+
+    async function loadPage(newOffset) {
+      offset = Math.max(0, newOffset);
+      const vnDay = document.getElementById('vnDay').value || todayVNDate();
+      const username = document.getElementById('filterUser').value.trim();
+
+      const params = { vn_day: vnDay, limit, offset };
+      if (username) params.username = username;
+
+      document.getElementById('dataBody').innerHTML =
+        '<tr><td colspan="7" class="center">Đang tải…</td></tr>';
+
+      try {
+        const { data } = await axios.get('/api/slot-game-daily/cms-list', { params });
+        if (!data.ok) throw new Error(data.error || 'Lỗi API');
+
+        total = Number(data.total || 0);
+        const items = data.items || [];
+        const meta = document.getElementById('meta');
+        meta.innerHTML =
+          `Nguồn: <strong>${escapeHtml(data.table)}</strong> — ngày <strong>${escapeHtml(data.vn_day)}</strong>. ` +
+          `Lợi nhuận = tiền thưởng (<code>total_reward_won</code>) − số lần quay × ${data.spin_unit_cost || 100}.`;
+
+        const body = document.getElementById('dataBody');
+        if (items.length === 0) {
+          body.innerHTML = '<tr><td colspan="7" class="center">Không có dữ liệu.</td></tr>';
+        } else {
+          body.innerHTML = items
+            .map((r, i) => {
+              const stt = offset + i + 1;
+              const profitClass = r.profit >= 0 ? '' : ' style="color:#c0392b;font-weight:600"';
+              return `<tr>
+                <td class="center">${stt}</td>
+                <td>${escapeHtml(r.username)}</td>
+                <td>${escapeHtml(r.game_name)} <span style="color:#888;font-size:11px">(slot ${r.slot_id})</span></td>
+                <td class="num">${formatNum(r.spin_count)}</td>
+                <td class="num">${formatNum(r.symbol_count)}</td>
+                <td class="center">${escapeHtml(r.reward_status)}</td>
+                <td class="num"${profitClass}>${formatNum(r.profit)}</td>
+              </tr>`;
+            })
+            .join('');
+        }
+        renderPagination();
+      } catch (e) {
+        document.getElementById('dataBody').innerHTML =
+          `<tr><td colspan="7" class="center">${escapeHtml(e.message || String(e))}</td></tr>`;
+        document.getElementById('pagination').innerHTML = '';
+        document.getElementById('meta').textContent = '';
+      }
+    }
+
+    document.getElementById('vnDay').value = todayVNDate();
+    loadPage(0);
+  </script>
+</body>
+</html>

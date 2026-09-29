@@ -13,6 +13,8 @@
     .btn-create{background:var(--green);} .btn-create:hover{background:#27ae60;}
     .btn-delete{background:var(--red);} .btn-delete:hover{background:#c0392b;}
     .btn-edit{background:var(--orange);} .btn-edit:hover{background:#e67e22;}
+    .btn-qr{background:#9b59b6;} .btn-qr:hover{background:#8e44ad;}
+    .btn-qr:disabled{background:#bdc3c7; cursor:not-allowed;}
     table{width:100%; border-collapse:collapse; background:#fff; border-radius:10px; overflow:hidden; margin-top:12px;}
     th, td{border:1px solid #eee; padding:10px; text-align:center; font-size:14px;}
     th{background:var(--blue); color:#fff; position:sticky; top:0; z-index:1;}
@@ -92,6 +94,16 @@
       color: #333;
       padding: 8px;
     }
+    .device-nap {
+      font-weight: 600;
+      color: #2c3e50;
+      background: #ecf0f1;
+      padding: 4px 8px;
+      border-radius: 6px;
+      display: inline-block;
+      min-width: 48px;
+    }
+    .device-nap.empty { color: #999; font-weight: normal; background: transparent; }
     .modal{display:none; position:fixed; z-index:999; left:0; top:0; width:100%; height:100%; background:rgba(0,0,0,0.5); overflow:auto;}
     .modal-content{background:#fff; margin:5% auto; padding:20px; border-radius:8px; width:90%; max-width:500px;}
     .modal-header{display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;}
@@ -100,6 +112,11 @@
     .form-group{margin-bottom:12px;}
     .form-group label{display:block; font-weight:bold; margin-bottom:4px;}
     .form-group input, .form-group select{width:100%; padding:8px; border-radius:4px; border:1px solid #ccc;}
+    #qrModal .modal-content{max-width:420px; text-align:center;}
+    #qrModal .qr-info{background:#f8f9fa; padding:16px; border-radius:10px; margin:16px 0; text-align:left; font-size:14px;}
+    #qrModal .qr-info p{margin:8px 0;}
+    #qrModal img{max-width:280px; width:100%; border:1px solid #eee; border-radius:8px;}
+    #qrModal .qr-missing{padding:24px; background:#f8d7da; color:#721c24; border-radius:8px;}
   </style>
 </head>
 <body>
@@ -136,8 +153,10 @@
       <th>Tên Người Nhận</th>
       <th>Nội Dung CK</th>
       <th>Trạng Thái</th>
+      <th>Device Nạp</th>
       <th>Thời Gian Tạo</th>
       <th>Cập Nhật</th>
+      <th>QR</th>
       <th>Thao Tác</th>
     </tr>
   </thead>
@@ -186,6 +205,11 @@
         <input type="text" id="transferContent" />
       </div>
 
+      <div class="form-group" id="deviceNapGroup" style="display:none;">
+        <label>Device Nạp</label>
+        <input type="text" id="deviceNap" placeholder="Tên thiết bị thực hiện chuyển khoản" />
+      </div>
+
       <div class="form-group" id="statusGroup" style="display:none;">
         <label>Trạng Thái</label>
         <select id="status">
@@ -203,6 +227,22 @@
         <button type="submit" class="btn-create">💾 Lưu</button>
       </div>
     </form>
+  </div>
+</div>
+
+<!-- Modal QR -->
+<div id="qrModal" class="modal">
+  <div class="modal-content">
+    <div class="modal-header">
+      <h3 id="qrModalTitle">Mã QR chuyển khoản</h3>
+      <span class="close-btn" onclick="closeQrModal()">&times;</span>
+    </div>
+    <div id="qrModalBody">
+      <p style="color:#666;">Đang tải mã QR...</p>
+    </div>
+    <div style="margin-top:12px;">
+      <button type="button" onclick="closeQrModal()">Đóng</button>
+    </div>
   </div>
 </div>
 
@@ -262,13 +302,19 @@ async function loadOrders() {
   }
 }
 
+function renderDeviceNap(order) {
+  const dev = (order.deviceNap || order.device_nap || '').trim();
+  if (!dev) return '<span class="device-nap empty">—</span>';
+  return `<span class="device-nap" title="Thiết bị nạp">${escapeHtml(dev)}</span>`;
+}
+
 // ========== RENDER TABLE ==========
 function renderOrders(orders) {
   const tbody = document.getElementById('ordersBody');
   tbody.innerHTML = '';
 
   if (orders.length === 0) {
-    tbody.innerHTML = '<tr><td colspan="11" style="text-align:center; color:#999;">Không có dữ liệu</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="13" style="text-align:center; color:#999;">Không có dữ liệu</td></tr>';
     return;
   }
 
@@ -294,8 +340,12 @@ function renderOrders(orders) {
             <option value="Huỷ" ${order.status === 'Huỷ' ? 'selected' : ''}>Huỷ</option>
           </select>
         </td>
+        <td>${renderDeviceNap(order)}</td>
         <td>${formatDateTime(order.createdAt)}</td>
         <td>${formatDateTime(order.updatedAt)}</td>
+        <td>
+          <button class="btn-qr" onclick="showOrderQR(${order.id})" title="Xem mã QR">📱 QR</button>
+        </td>
         <td>
           <div class="actions">
             <button class="btn-edit" onclick="openEditModal(${order.id})">✏️</button>
@@ -372,19 +422,15 @@ function openCreateModal() {
   document.getElementById('orderForm').reset();
   document.getElementById('orderId').value = '';
   document.getElementById('statusGroup').style.display = 'none';
+  document.getElementById('deviceNapGroup').style.display = 'none';
   document.getElementById('orderModal').style.display = 'block';
 }
 
 async function openEditModal(id) {
   try {
-    const res = await fetch(`/api/deposit-orders?page=1&limit=9999`);
-    const data = await res.json();
-    const order = (data.data || []).find(o => o.id === id);
-    
-    if (!order) {
-      alert('Không tìm thấy lệnh nạp');
-      return;
-    }
+    const res = await fetch(`/api/deposit-orders/${id}`);
+    if (!res.ok) throw new Error('Không tìm thấy lệnh nạp');
+    const order = await res.json();
 
     document.getElementById('modalTitle').innerText = `Chỉnh Sửa Lệnh #${id}`;
     document.getElementById('orderId').value = order.id;
@@ -394,8 +440,10 @@ async function openEditModal(id) {
     document.getElementById('bank').value = order.bank || '';
     document.getElementById('accountHolder').value = order.accountHolder || '';
     document.getElementById('transferContent').value = order.transferContent || '';
+    document.getElementById('deviceNap').value = order.deviceNap || order.device_nap || '';
     document.getElementById('status').value = order.status;
     document.getElementById('statusGroup').style.display = 'block';
+    document.getElementById('deviceNapGroup').style.display = 'block';
     document.getElementById('orderModal').style.display = 'block';
   } catch (err) {
     console.error('❌ Lỗi khi load order:', err);
@@ -405,6 +453,67 @@ async function openEditModal(id) {
 
 function closeModal() {
   document.getElementById('orderModal').style.display = 'none';
+}
+
+// ========== QR MODAL ==========
+function escapeHtml(text) {
+  return String(text ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
+async function showOrderQR(orderId) {
+  const modal = document.getElementById('qrModal');
+  const body = document.getElementById('qrModalBody');
+  document.getElementById('qrModalTitle').innerText = `Mã QR — Lệnh #${orderId}`;
+  body.innerHTML = '<p style="color:#666;">Đang tải mã QR...</p>';
+  modal.style.display = 'block';
+
+  try {
+    const res = await fetch(`/api/deposit-orders/${orderId}/qr`);
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Không thể tải QR');
+
+    const order = data.order || {};
+    let qrImageSrc = data.qrLink || '';
+    if (!qrImageSrc && data.qrBase64) {
+      qrImageSrc = String(data.qrBase64).startsWith('data:image')
+        ? data.qrBase64
+        : `data:image/png;base64,${data.qrBase64}`;
+    }
+
+    body.innerHTML = `
+      <div class="qr-info">
+        <p><strong>🎮 User:</strong> ${escapeHtml(order.username || '---')}</p>
+        <p><strong>👤 Tên TK:</strong> ${escapeHtml(order.accountHolder || '---')}</p>
+        <p><strong>🏦 STK:</strong> ${escapeHtml(order.accountNumber || '---')}</p>
+        <p><strong>🏛️ Ngân hàng:</strong> ${escapeHtml(order.bank || '---')}</p>
+        <p><strong>💰 Số tiền:</strong> ${formatAmount(order.amount).replace(/<[^>]*>/g, '')}</p>
+        <p><strong>📝 Nội dung CK:</strong> <span style="color:#e74c3c; font-weight:bold;">${escapeHtml(order.transferContent || '---')}</span></p>
+        <p><strong>📱 Device nạp:</strong> ${escapeHtml(order.deviceNap || order.device_nap || '—')}</p>
+      </div>
+      ${qrImageSrc ? `
+        <img src="${qrImageSrc.replace(/"/g, '&quot;')}" alt="QR Code"
+          onerror="this.style.display='none'; document.getElementById('qrLoadError').style.display='block';">
+        <div id="qrLoadError" style="display:none;" class="qr-missing">❌ Không thể hiển thị mã QR</div>
+      ` : `
+        <div class="qr-missing">
+          ❌ Không tìm thấy mã QR cho lệnh này<br>
+          <small style="opacity:.85;">Ảnh QR thường nằm trong thư mục qr_outputs sau khi tạo lệnh qua LC79</small>
+        </div>
+      `}
+      <p style="color:#7f8c8d; font-size:13px; margin-top:12px;">Quét mã QR hoặc chuyển khoản theo thông tin trên</p>
+    `;
+  } catch (err) {
+    console.error('❌ Lỗi khi load QR:', err);
+    body.innerHTML = `<div class="qr-missing">${escapeHtml(err.message || 'Không thể tải mã QR')}</div>`;
+  }
+}
+
+function closeQrModal() {
+  document.getElementById('qrModal').style.display = 'none';
 }
 
 // ========== SUBMIT FORM ==========
@@ -419,9 +528,13 @@ async function submitOrder(event) {
   const accountHolder = document.getElementById('accountHolder').value.trim();
   const transferContent = document.getElementById('transferContent').value.trim();
   const status = document.getElementById('status').value;
+  const deviceNap = document.getElementById('deviceNap').value.trim();
 
   const payload = { username, amount, accountNumber, bank, accountHolder, transferContent };
-  if (id) payload.status = status;
+  if (id) {
+    payload.status = status;
+    payload.deviceNap = deviceNap;
+  }
 
   try {
     let res;
@@ -534,6 +647,8 @@ updateFilterStatusStyle(document.getElementById('filterStatus'));
 window.onclick = function(event) {
   const modal = document.getElementById('orderModal');
   if (event.target === modal) closeModal();
+  const qrModal = document.getElementById('qrModal');
+  if (event.target === qrModal) closeQrModal();
 }
 </script>
 

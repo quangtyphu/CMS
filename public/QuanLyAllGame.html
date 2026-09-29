@@ -1,0 +1,616 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8">
+  <title>AllGame — Quản lý tài khoản</title>
+  <script src="https://cdn.jsdelivr.net/npm/axios/dist/axios.min.js"></script>
+  <style>
+    body { font-family: Arial, sans-serif; margin: 0; padding: 16px; background: #f5f6fa; }
+    h1 { color: #2c3e50; margin: 0 0 8px; }
+    h2 { color: #2c3e50; margin-top: 20px; font-size: 18px; }
+    .hint { font-size: 13px; color: #666; margin: 0 0 12px; }
+    .form-grid { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }
+    .form-grid input, .form-grid select {
+      padding: 8px; border: 1px solid #ccc; border-radius: 4px; min-width: 140px;
+    }
+    .filter-bar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 10px; }
+    .btn {
+      padding: 8px 14px; border: none; border-radius: 4px; color: #fff; cursor: pointer; margin-right: 6px;
+    }
+    .btn-primary { background: #27ae60; }
+    .btn-primary:hover { background: #219150; }
+    .btn-blue { background: #3498db; }
+    .btn-blue:hover { background: #2980b9; }
+    .btn-gray { background: #7f8c8d; }
+    .btn-danger { background: #e74c3c; }
+    .btn-sm { font-size: 12px; padding: 6px 10px; }
+    .btn-open { background: #27ae60; }
+    .btn-open:hover { background: #1e8449; }
+    .btn-open:disabled { opacity: 0.5; }
+    .chrome-label { font-size: 11px; color: #555; }
+    #btnRefresh {
+      position: fixed; top: 20px; right: 30px; z-index: 9999;
+      width: 140px; padding: 10px; font-size: 15px; border-radius: 6px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+    }
+    table { width: 100%; border-collapse: collapse; background: #fff; font-size: 12px; }
+    th, td { border: 1px solid #ddd; padding: 6px 4px; text-align: center; }
+    th { background: #2980b9; color: #fff; position: sticky; top: 0; }
+    .totals-bar {
+      display: flex; flex-wrap: wrap; gap: 16px 24px; margin: 0 0 10px;
+      padding: 10px 14px; background: #34495e; color: #fff; border-radius: 6px; font-size: 14px;
+    }
+    .totals-bar .lbl { color: #bdc3c7; margin-right: 6px; }
+    .tot-bal { color: #2ecc71; font-weight: 700; }
+    .tot-bet { color: #f1c40f; font-weight: 700; }
+    .inline-input {
+      width: 100%; box-sizing: border-box; border: none; background: transparent;
+      font-size: 12px; outline: none; border-bottom: 1px dashed #95a5a6;
+    }
+    .inline-input:focus { background: rgba(41,128,185,0.08); border-bottom-color: #2980b9; }
+    .inline-input.saving { opacity: 0.5; }
+    .inline-input.saved { border-bottom-color: #27ae60; color: #1e8449; }
+    .inline-input.error { border-bottom-color: #e74c3c; color: #c0392b; }
+    select.status-select {
+      font-size: 12px; padding: 4px; max-width: 120px; border-radius: 4px; cursor: pointer;
+    }
+    select.status-select.playing { background: #2ecc71; color: #fff; font-weight: bold; }
+    select.status-select.du-ngay { background: #9b59b6; color: #fff; font-weight: bold; }
+    select.status-select.het-tien { background: #e74c3c; color: #fff; font-weight: bold; }
+    select.status-select.khoa { background: #7f8c8d; color: #fff; font-weight: bold; }
+    tr.row-playing { background: #b3ffcc; }
+    tr.row-du-ngay { background: #e6ccff; }
+    tr.row-het-tien { background: #ffb3b3; }
+    tr.row-khoa { background: #dfe6e9; color: #2c3e50; }
+    td.td-game { font-weight: 700; text-transform: uppercase; white-space: nowrap; }
+    #logBox {
+      background: #1e272e; color: #dfe6e9; padding: 8px; border-radius: 4px;
+      font-size: 12px; max-height: 120px; overflow: auto; margin-bottom: 12px;
+    }
+    .cell-actions { display: flex; flex-wrap: wrap; gap: 4px; justify-content: center; }
+    th.th-proxy, td.td-proxy { max-width: 160px; }
+  </style>
+</head>
+<body>
+  <h1>AllGame — Quản lý tài khoản</h1>
+  <p class="hint">
+    DB: <code>CMS/game_data/allgame.db</code> · Khóa <b>Game + Username</b>.
+    Thêm acc → tự tạo profile <code>allgame_browsers/{game}/{user}</code>.
+    <strong>Mở Chrome</strong> luôn đọc <b>proxy mới nhất từ DB</b> (sửa proxy trên bảng → mở lại).
+    <strong>Mở Chrome</strong> chỉ mở trình duyệt (giống Quản lý Chrome). Check session / WS: gọi API <code>open-chrome-post</code>.
+  </p>
+  <div id="logBox">Sẵn sàng.</div>
+
+  <button type="button" id="btnRefresh" class="btn btn-blue" onclick="loadAccounts()">🔄 Refresh</button>
+
+  <h2 id="formTitle">Thêm tài khoản</h2>
+  <form id="accForm" onsubmit="saveAccount(event)">
+    <input type="hidden" id="editPortalId" value="">
+    <input type="hidden" id="editUsername" value="">
+    <div class="form-grid">
+      <select id="portal_id" required title="Cổng game"></select>
+      <input type="text" id="username" placeholder="Username *" required>
+      <input type="text" id="password" placeholder="Mật khẩu đăng nhập">
+      <input type="text" id="phone" placeholder="SĐT" maxlength="10">
+      <input type="text" id="account_holder" placeholder="Tên đăng ký">
+      <input type="text" id="fund_password" placeholder="MK rút (6 số)">
+      <select id="bank_code">
+        <option value="">-- Ngân hàng --</option>
+        <option value="MSB">MSB</option>
+        <option value="VPB">VPBank</option>
+        <option value="VIB">VIB</option>
+        <option value="TCB">Techcombank</option>
+        <option value="ACB">ACB</option>
+        <option value="BIDV">BIDV</option>
+        <option value="VTB">VietinBank</option>
+      </select>
+      <input type="text" id="account_number" placeholder="Số TK NH">
+      <input type="text" id="proxy" placeholder="Proxy host:port:user:pass" style="min-width:260px">
+      <input type="text" id="device" placeholder="Thiết bị">
+      <input type="number" id="balance" placeholder="Số dư" step="1" min="0">
+      <input type="number" id="daily_bet_total" placeholder="Cược ngày" step="1" min="0">
+      <select id="status">
+        <option value="new">Mới (new)</option>
+        <option value="Khoá">Khoá</option>
+        <option value="Đang Chơi">Đang Chơi</option>
+        <option value="Đủ ngày">Đủ ngày</option>
+        <option value="Hết Tiền">Hết Tiền</option>
+        <option value="Token Lỗi">Token Lỗi</option>
+      </select>
+    </div>
+    <button type="submit" class="btn btn-primary" id="btnSave">Lưu</button>
+    <button type="button" class="btn btn-gray" onclick="resetForm()">Reset</button>
+    <a id="btnExportCsv" class="btn btn-blue" href="/api/allgame/accounts-export.csv" download style="text-decoration:none;display:inline-block">Xuất CSV</a>
+  </form>
+
+  <h2>Danh sách</h2>
+  <div class="filter-bar">
+    <label for="filterPortal">Game:</label>
+    <select id="filterPortal" title="Lọc theo cổng game">
+      <option value="">— Tất cả —</option>
+    </select>
+    <label for="filterDevice">Device ID:</label>
+    <input type="text" id="filterDevice" placeholder="Tìm device (một phần cũng được)" style="min-width:220px">
+    <button type="button" class="btn btn-blue btn-sm" onclick="applyFilters()">Lọc / Tìm</button>
+    <button type="button" class="btn btn-gray btn-sm" onclick="clearFilters()">Xóa lọc</button>
+    <span id="filterHint" class="hint" style="margin:0"></span>
+  </div>
+  <div class="totals-bar" id="totalsBar">
+    <span><span class="lbl">Tổng số dư:</span> <span class="tot-bal" id="totBalance">0</span></span>
+    <span><span class="lbl">Tổng cược ngày:</span> <span class="tot-bet" id="totDailyBet">0</span></span>
+    <span><span class="lbl">Hiển thị:</span> <span id="totCount">0</span> acc</span>
+  </div>
+  <table id="tbl">
+    <thead>
+      <tr>
+        <th>STT</th><th>Game</th><th>Username</th><th>Chrome</th><th>Phone</th><th>Tên ĐK</th><th>Status</th>
+        <th>Số dư</th><th>Cược ngày</th>
+        <th class="th-proxy">Proxy</th><th>Device</th>
+        <th>Bank</th><th>STK</th><th>MK rút</th>
+        <th>Sửa / Xóa</th>
+      </tr>
+    </thead>
+    <tbody></tbody>
+  </table>
+
+<script>
+const API = '/api/allgame/accounts';
+const PORTALS_API = '/api/allgame/portals';
+let accounts = [];
+let portals = [];
+
+function log(msg) {
+  const box = document.getElementById('logBox');
+  const t = new Date().toLocaleTimeString('vi-VN');
+  box.textContent = `[${t}] ${msg}\n` + box.textContent;
+  box.textContent = box.textContent.slice(0, 4000);
+}
+
+function fmtNum(n) {
+  return (Number(n) || 0).toLocaleString('vi-VN');
+}
+
+const ALLGAME_STATUSES = ['new', 'Khoá', 'Đang Chơi', 'Đủ ngày', 'Hết Tiền', 'Token Lỗi'];
+
+const ALLGAME_STATUS_SORT = {
+  'Đang Chơi': 1,
+  'Đủ ngày': 2,
+  'Hết Tiền': 3,
+  new: 4,
+  'Khoá': 5,
+  'Khóa': 5,
+  'Token Lỗi': 6,
+};
+
+function statusSortKey(st) {
+  return ALLGAME_STATUS_SORT[String(st || '')] ?? 50;
+}
+
+function sortAccountsByStatus(list) {
+  return [...list].sort((a, b) => {
+    const d = statusSortKey(a.status) - statusSortKey(b.status);
+    if (d !== 0) return d;
+    const bal = (Number(b.balance) || 0) - (Number(a.balance) || 0);
+    if (bal !== 0) return bal;
+    const pg = String(a.portal_id || '').localeCompare(String(b.portal_id || ''), 'vi');
+    if (pg !== 0) return pg;
+    return String(a.username || '').localeCompare(String(b.username || ''), 'vi', {
+      sensitivity: 'base',
+    });
+  });
+}
+
+function statusClass(st) {
+  const s = String(st || '');
+  if (s === 'Đang Chơi') return 'playing';
+  if (s === 'Đủ ngày') return 'du-ngay';
+  if (s === 'Hết Tiền') return 'het-tien';
+  if (s === 'Khoá' || s === 'Khóa') return 'khoa';
+  return '';
+}
+
+function rowClass(st) {
+  const s = String(st || '');
+  if (s === 'Đang Chơi') return 'row-playing';
+  if (s === 'Đủ ngày') return 'row-du-ngay';
+  if (s === 'Hết Tiền') return 'row-het-tien';
+  if (s === 'Khoá' || s === 'Khóa') return 'row-khoa';
+  return '';
+}
+
+function statusOptions(selected) {
+  const sel = String(selected || '');
+  const opts = [...ALLGAME_STATUSES];
+  if (sel && !opts.includes(sel)) opts.push(sel);
+  return opts.map((o) =>
+    `<option value="${esc(o)}"${o === sel ? ' selected' : ''}>${esc(o)}</option>`
+  ).join('');
+}
+
+function portalLabel(portalId) {
+  const p = portals.find((x) => x.portal_id === portalId);
+  return (p && p.display_name) || portalId || '—';
+}
+
+function apiPath(portalId, username) {
+  return `${API}/${encodeURIComponent(portalId)}/${encodeURIComponent(username)}`;
+}
+
+function fillPortalSelects() {
+  const formSel = document.getElementById('portal_id');
+  const filterSel = document.getElementById('filterPortal');
+  const list = portals.filter((p) => p.enabled);
+  const items = list.length ? list : portals;
+  const opts = items
+    .map(
+      (p) =>
+        `<option value="${esc(p.portal_id)}">${esc(p.display_name || p.portal_id)}</option>`
+    )
+    .join('');
+  formSel.innerHTML = opts;
+  const prevFilter = filterSel.value;
+  filterSel.innerHTML =
+    '<option value="">— Tất cả —</option>' +
+    items
+      .map(
+        (p) =>
+          `<option value="${esc(p.portal_id)}">${esc(p.display_name || p.portal_id)}</option>`
+      )
+      .join('');
+  if (prevFilter) filterSel.value = prevFilter;
+}
+
+async function loadPortals() {
+  try {
+    const { data } = await axios.get(PORTALS_API);
+    portals = (data && data.items) || [];
+  } catch (_) {
+    portals = [
+      { portal_id: 'cm88', display_name: 'CM88', enabled: true },
+      { portal_id: 'fly88', display_name: 'FLY88', enabled: true },
+      { portal_id: 'c168', display_name: 'C168', enabled: true },
+      { portal_id: 'f168', display_name: 'F168', enabled: true },
+      { portal_id: 'sc88', display_name: 'SC88', enabled: true },
+    ];
+  }
+  fillPortalSelects();
+}
+
+function listQueryParams() {
+  const params = {};
+  const pid = document.getElementById('filterPortal').value.trim();
+  const dev = document.getElementById('filterDevice').value.trim();
+  if (pid) params.portal_id = pid;
+  if (dev) params.device = dev;
+  return params;
+}
+
+function updateExportCsvLink() {
+  const q = new URLSearchParams(listQueryParams());
+  const el = document.getElementById('btnExportCsv');
+  if (!el) return;
+  const qs = q.toString();
+  el.href = '/api/allgame/accounts-export.csv' + (qs ? '?' + qs : '');
+}
+
+function updateFilterHint() {
+  const hint = document.getElementById('filterHint');
+  if (!hint) return;
+  const pid = document.getElementById('filterPortal').value.trim();
+  const dev = document.getElementById('filterDevice').value.trim();
+  const parts = [];
+  if (pid) parts.push('game: ' + portalLabel(pid));
+  if (dev) parts.push('device chứa: "' + dev + '"');
+  hint.textContent = parts.length ? 'Đang lọc — ' + parts.join(' · ') : '';
+}
+
+function applyFilters() {
+  loadAccounts();
+}
+
+function clearFilters() {
+  document.getElementById('filterPortal').value = '';
+  document.getElementById('filterDevice').value = '';
+  loadAccounts();
+}
+
+async function loadAccounts() {
+  const btn = document.getElementById('btnRefresh');
+  btn.disabled = true;
+  try {
+    await loadPortals();
+    const params = listQueryParams();
+    const { data } = await axios.get(API, { params });
+    accounts = sortAccountsByStatus(Array.isArray(data) ? data : []);
+    updateExportCsvLink();
+    updateFilterHint();
+    renderTable();
+    const pid = params.portal_id || '';
+    const dev = params.device || '';
+    let msg = `Đã tải ${accounts.length} tài khoản`;
+    if (pid || dev) {
+      const bits = [];
+      if (pid) bits.push(portalLabel(pid));
+      if (dev) bits.push('device "' + dev + '"');
+      msg += ' (' + bits.join(', ') + ')';
+    }
+    log(msg + '.');
+  } catch (e) {
+    log('Lỗi tải: ' + (e.response?.data?.error || e.message));
+    alert('Lỗi tải danh sách: ' + (e.response?.data?.error || e.message));
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+function filteredAccounts() {
+  return accounts;
+}
+
+function renderTable() {
+  const tbody = document.querySelector('#tbl tbody');
+  const rows = sortAccountsByStatus(filteredAccounts());
+  let sumBal = 0, sumBet = 0;
+  tbody.innerHTML = rows.map((a, i) => {
+    sumBal += Number(a.balance) || 0;
+    sumBet += Number(a.daily_bet_total) || 0;
+    const stCls = statusClass(a.status);
+    const pid = esc(a.portal_id);
+    const user = esc(a.username);
+    return `<tr class="${rowClass(a.status)}" data-portal-id="${pid}" data-username="${user}">
+      <td>${i + 1}</td>
+      <td class="td-game">${esc(portalLabel(a.portal_id))}</td>
+      <td><b>${user}</b></td>
+      <td>
+        <div class="chrome-label">${a.chrome_ready ? 'Profile OK' : 'Profile mới'}</div>
+        <button type="button" class="btn btn-open btn-sm" data-open-pid="${pid}" data-open-user="${user}">Mở Chrome</button>
+      </td>
+      <td class="td-inline"><input class="inline-input" data-field="phone" value="${esc(a.phone || '')}"></td>
+      <td class="td-inline"><input class="inline-input" data-field="account_holder" value="${esc(a.account_holder || '')}"></td>
+      <td><select class="status-select ${stCls}" data-field="status">${statusOptions(a.status)}</select></td>
+      <td class="td-inline"><input class="inline-input" data-field="balance" type="number" value="${Number(a.balance) || 0}"></td>
+      <td class="td-inline"><input class="inline-input" data-field="daily_bet_total" type="number" value="${Number(a.daily_bet_total) || 0}"></td>
+      <td class="td-proxy td-inline"><input class="inline-input" data-field="proxy" value="${esc(a.proxy || '')}"></td>
+      <td class="td-inline"><input class="inline-input" data-field="device" value="${esc(a.device || '')}"></td>
+      <td class="td-inline"><input class="inline-input" data-field="bank_code" value="${esc(a.bank_code || '')}" title="bank_code"></td>
+      <td class="td-inline"><input class="inline-input" data-field="account_number" value="${esc(a.account_number || '')}"></td>
+      <td>${esc(a.fund_password || '—')}</td>
+      <td class="cell-actions">
+        <button type="button" class="btn btn-blue btn-sm" data-edit-pid="${pid}" data-edit-user="${user}">Sửa</button>
+        <button type="button" class="btn btn-danger btn-sm" data-del-pid="${pid}" data-del-user="${user}">Xóa</button>
+      </td>
+    </tr>`;
+  }).join('');
+  document.getElementById('totBalance').textContent = fmtNum(sumBal);
+  document.getElementById('totDailyBet').textContent = fmtNum(sumBet);
+  document.getElementById('totCount').textContent = rows.length;
+  bindInlineEdits();
+  document.querySelectorAll('[data-del-pid]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      deleteAccount(btn.dataset.delPid, btn.dataset.delUser);
+    });
+  });
+  document.querySelectorAll('[data-edit-pid]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      editAccount(btn.dataset.editPid, btn.dataset.editUser);
+    });
+  });
+  document.querySelectorAll('[data-open-pid]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      openChrome(btn.dataset.openPid, btn.dataset.openUser, btn);
+    });
+  });
+}
+
+async function openChrome(portalId, username, btn) {
+  const acc = accounts.find(
+    (x) => x.portal_id === portalId && x.username === username
+  );
+  const px = String(acc?.proxy || '').trim();
+  if (!px || px.split(':').length < 4) {
+    alert('Nhập proxy SOCKS5: host:port:user:pass trước khi mở Chrome');
+    return;
+  }
+  if (btn) btn.disabled = true;
+  try {
+    const { data } = await axios.post(apiPath(portalId, username) + '/open-chrome', {});
+    if (!data.ok) throw new Error(data.error || 'Mở thất bại');
+    const pxL = data.proxy_label || data.proxy || '';
+    log((data.message || 'Đã mở Chrome') + (pxL ? ' · ' + pxL : ''));
+    if (acc) {
+      acc.chrome_ready = true;
+      acc.chrome_browser_dir = data.chrome_browser_dir || acc.chrome_browser_dir;
+      acc.cdp_url = data.cdp_url || acc.cdp_url;
+    }
+    renderTable();
+  } catch (e) {
+    const msg = e.response?.data?.error || e.message;
+    log('Mở Chrome: ' + msg);
+    alert(msg);
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+}
+
+function esc(s) {
+  return String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/"/g,'&quot;');
+}
+
+function bindInlineEdits() {
+  document.querySelectorAll('#tbl tbody tr').forEach((tr) => {
+    const portalId = tr.dataset.portalId;
+    const username = tr.dataset.username;
+    tr.querySelectorAll('[data-field]').forEach((el) => {
+      const field = el.dataset.field;
+      const save = () => patchField(portalId, username, field, el);
+      if (el.tagName === 'SELECT') {
+        el.addEventListener('change', () => {
+          el.className = 'status-select ' + statusClass(el.value) + ' saving';
+          save();
+        });
+      } else {
+        el.addEventListener('blur', save);
+        el.addEventListener('keydown', (ev) => {
+          if (ev.key === 'Enter') { ev.preventDefault(); el.blur(); }
+        });
+      }
+    });
+  });
+}
+
+async function patchField(portalId, username, field, el) {
+  let val = el.value;
+  if (field === 'balance' || field === 'daily_bet_total') val = Number(val) || 0;
+  const payload = { [field]: val };
+  if (field === 'bank_code') payload.bank_name = val;
+  el.classList.add('saving');
+  try {
+    await axios.put(apiPath(portalId, username), payload);
+    el.classList.remove('saving', 'error');
+    el.classList.add('saved');
+    setTimeout(() => el.classList.remove('saved'), 800);
+    const idx = accounts.findIndex(
+      (a) => a.portal_id === portalId && a.username === username
+    );
+    if (idx >= 0) accounts[idx] = { ...accounts[idx], ...payload };
+    if (field === 'status' || field === 'balance') {
+      accounts = sortAccountsByStatus(accounts);
+      renderTable();
+      return;
+    }
+    renderTotalsOnly();
+  } catch (e) {
+    el.classList.add('error');
+    log(`Lỗi ${field}: ` + (e.response?.data?.error || e.message));
+  } finally {
+    el.classList.remove('saving');
+  }
+}
+
+function renderTotalsOnly() {
+  const rows = filteredAccounts();
+  let sumBal = 0, sumBet = 0;
+  rows.forEach((a) => {
+    sumBal += Number(a.balance) || 0;
+    sumBet += Number(a.daily_bet_total) || 0;
+  });
+  document.getElementById('totBalance').textContent = fmtNum(sumBal);
+  document.getElementById('totDailyBet').textContent = fmtNum(sumBet);
+  document.getElementById('totCount').textContent = rows.length;
+}
+
+function formPayload() {
+  const bank = document.getElementById('bank_code').value.trim();
+  return {
+    portal_id: document.getElementById('portal_id').value.trim(),
+    username: document.getElementById('username').value.trim(),
+    password: document.getElementById('password').value,
+    phone: document.getElementById('phone').value.trim(),
+    account_holder: document.getElementById('account_holder').value.trim(),
+    fund_password: document.getElementById('fund_password').value.trim(),
+    bank_code: bank,
+    bank_name: bank,
+    account_number: document.getElementById('account_number').value.trim(),
+    proxy: document.getElementById('proxy').value.trim(),
+    device: document.getElementById('device').value.trim(),
+    balance: Number(document.getElementById('balance').value) || 0,
+    daily_bet_total: Number(document.getElementById('daily_bet_total').value) || 0,
+    status: document.getElementById('status').value,
+  };
+}
+
+async function saveAccount(ev) {
+  ev.preventDefault();
+  const payload = formPayload();
+  if (!payload.portal_id) { alert('Chọn game'); return; }
+  if (!payload.username) { alert('Nhập username'); return; }
+  const editPortal = document.getElementById('editPortalId').value;
+  const editUser = document.getElementById('editUsername').value;
+  const btn = document.getElementById('btnSave');
+  btn.disabled = true;
+  try {
+    if (editPortal && editUser) {
+      await axios.put(apiPath(editPortal, editUser), payload);
+      log(`Đã cập nhật ${payload.portal_id} / ${payload.username}`);
+    } else {
+      await axios.post(API, payload);
+      log(`Đã thêm ${payload.portal_id} / ${payload.username}`);
+    }
+    resetForm();
+    await loadAccounts();
+  } catch (e) {
+    alert(e.response?.data?.error || e.message);
+    log('Lỗi lưu: ' + (e.response?.data?.error || e.message));
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+async function editAccount(portalId, username) {
+  try {
+    const { data } = await axios.get(apiPath(portalId, username) + '?secrets=1');
+    document.getElementById('editPortalId').value = data.portal_id;
+    document.getElementById('editUsername').value = data.username;
+    document.getElementById('portal_id').value = data.portal_id || portalId;
+    document.getElementById('portal_id').disabled = true;
+    document.getElementById('username').readOnly = true;
+    document.getElementById('formTitle').textContent =
+      'Sửa — ' + portalLabel(data.portal_id) + ' / ' + data.username;
+    document.getElementById('username').value = data.username || '';
+    document.getElementById('password').value = data.password || '';
+    document.getElementById('phone').value = data.phone || '';
+    document.getElementById('account_holder').value = data.account_holder || '';
+    document.getElementById('fund_password').value = data.fund_password || '';
+    document.getElementById('bank_code').value = data.bank_code || data.bank_name || '';
+    document.getElementById('account_number').value = data.account_number || '';
+    document.getElementById('proxy').value = data.proxy || '';
+    document.getElementById('device').value = data.device || '';
+    document.getElementById('balance').value = Number(data.balance) || 0;
+    document.getElementById('daily_bet_total').value = Number(data.daily_bet_total) || 0;
+    document.getElementById('status').value = data.status || 'new';
+    document.getElementById('accForm').scrollIntoView({ behavior: 'smooth' });
+  } catch (e) {
+    alert(e.response?.data?.error || e.message);
+  }
+}
+
+async function deleteAccount(portalId, username) {
+  if (!confirm(`Xóa ${portalLabel(portalId)} / ${username}?`)) return;
+  try {
+    await axios.delete(apiPath(portalId, username));
+    log(`Đã xóa ${portalId} / ${username}`);
+    if (
+      document.getElementById('editPortalId').value === portalId &&
+      document.getElementById('editUsername').value === username
+    ) {
+      resetForm();
+    }
+    await loadAccounts();
+  } catch (e) {
+    alert(e.response?.data?.error || e.message);
+  }
+}
+
+function resetForm() {
+  document.getElementById('editPortalId').value = '';
+  document.getElementById('editUsername').value = '';
+  document.getElementById('portal_id').disabled = false;
+  document.getElementById('username').readOnly = false;
+  document.getElementById('formTitle').textContent = 'Thêm tài khoản';
+  document.getElementById('accForm').reset();
+  document.getElementById('status').value = 'new';
+  fillPortalSelects();
+}
+
+document.getElementById('filterDevice')?.addEventListener('keydown', (ev) => {
+  if (ev.key === 'Enter') {
+    ev.preventDefault();
+    applyFilters();
+  }
+});
+document.getElementById('filterPortal')?.addEventListener('change', () => applyFilters());
+
+loadAccounts();
+</script>
+</body>
+</html>

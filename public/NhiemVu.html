@@ -77,7 +77,7 @@
 <body>
   <div class="wrap">
     <h2>Nhiệm Vụ</h2>
-    <p class="muted">Tổng cược hiện tại, mốc nhận thưởng tiếp theo, và phần còn thiếu (mốc − tổng).</p>
+    <p class="muted">Danh sách sắp xếp theo VIP tăng dần (điểm thấp lên trên). Tổng cược hiện tại, mốc nhận thưởng tiếp theo, và phần còn thiếu (mốc − tổng).</p>
 
     <div class="toolbar">
       <input type="text" id="filterUser" placeholder="Lọc username…" aria-label="Lọc username">
@@ -169,9 +169,17 @@
 
     function render() {
       const q = document.getElementById('filterUser').value.trim().toLowerCase();
-      const filtered = q
+      let filtered = q
         ? rows.filter((r) => String(r.username || '').toLowerCase().includes(q))
-        : rows;
+        : rows.slice();
+
+      // VIP tăng dần (điểm ít lên trên); hòa → username
+      filtered.sort((a, b) => {
+        const va = Number(a.vip) || 0;
+        const vb = Number(b.vip) || 0;
+        if (va !== vb) return va - vb;
+        return String(a.username || '').localeCompare(String(b.username || ''));
+      });
 
       const tbody = document.querySelector('#tbl tbody');
       tbody.innerHTML = '';

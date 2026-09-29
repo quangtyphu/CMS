@@ -1,0 +1,6 @@
+{
+  "default_startup_urls": [
+    "https://www.google.com",
+    "https://api.ipify.org"
+  ]
+}

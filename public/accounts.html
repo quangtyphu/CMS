@@ -88,6 +88,11 @@
 
     <!-- Phần danh sách tài khoản -->
     <h2 class="section-title">Danh sách tài khoản</h2>
+    <p style="margin: 0 0 12px 0;">
+      <button type="button" class="btn" id="btnExportAll" style="background:#3498db;">Xuất CSV (tất cả)</button>
+      <button type="button" class="btn" id="btnExportLC79" style="background:#2980b9;">Xuất CSV (LC79)</button>
+      <span style="color:#666;font-size:13px;margin-left:8px;">username / SĐT / Ngân hàng / STK / Chủ TK / Thiết bị / proxy</span>
+    </p>
     <table id="accountTable">
       <thead>
         <tr>
@@ -175,25 +180,38 @@ function resetForm() {
 document.getElementById("accountForm").addEventListener("submit", async (e) => {
   e.preventDefault();
   const payload = readForm();
-
-  if (isEditMode) {
-    // Cập nhật
-    await fetch(`/api/accounts/${editingUsername}`, {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
-    });
-  } else {
-    // Thêm mới
-    await fetch("/api/accounts", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
-    });
+  if (!payload.username || !String(payload.username).trim()) {
+    alert("Nhập tên đăng nhập");
+    return;
   }
 
-  resetForm();
-  loadAccounts();
+  try {
+    let res;
+    if (isEditMode) {
+      res = await fetch(`/api/accounts/${encodeURIComponent(editingUsername)}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+    } else {
+      res = await fetch("/api/accounts", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+    }
+
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.error || err.message || ("HTTP " + res.status));
+    }
+
+    resetForm();
+    loadAccounts();
+  } catch (err) {
+    console.error(err);
+    alert("Lưu thất bại: " + (err.message || err));
+  }
 });
 
 document.addEventListener("click", async (e) => {
@@ -218,6 +236,14 @@ document.addEventListener("click", async (e) => {
     document.getElementById("submitBtn").textContent = "Cập nhật";
   }
 });
+
+function downloadAccountsExport(game) {
+  const q = game ? `?game=${encodeURIComponent(game)}` : '';
+  window.location.href = `/api/accounts/export.csv${q}`;
+}
+
+document.getElementById('btnExportAll').addEventListener('click', () => downloadAccountsExport(''));
+document.getElementById('btnExportLC79').addEventListener('click', () => downloadAccountsExport('LC79'));
 
 loadAccounts();
 </script>
