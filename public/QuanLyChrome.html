@@ -275,6 +275,7 @@
             <option value="VIB">VIB</option>
             <option value="TCB">Techcombank</option>
             <option value="ACB">ACB</option>
+            <option value="SAB">SEABANK</option>
           </select>
         </div>
         <div class="field">
@@ -334,6 +335,7 @@
             <option value="VIB">VIB</option>
             <option value="TCB">Techcombank</option>
             <option value="ACB">ACB</option>
+            <option value="SAB">SEABANK</option>
           </select>
         </div>
         <div class="field">
@@ -641,9 +643,18 @@
       const sel = document.getElementById(selectId || 'x66Bank');
       if (!sel) return;
       if (!b) { sel.value = ''; return; }
-      for (const opt of sel.options) {
-        if (opt.value && b.includes(opt.value)) { sel.value = opt.value; return; }
+      // SEABANK chứa chuỗi "ACB" — nhận SAB trước khi so khớp chung
+      if (
+        (b === 'SAB' || b.includes('SEABANK') || b.includes('SEA_BANK') || b.includes('SEA BANK')) &&
+        [...sel.options].some((o) => o.value === 'SAB')
+      ) {
+        sel.value = 'SAB';
+        return;
       }
+      for (const opt of sel.options) {
+        if (opt.value && opt.value !== 'ACB' && b.includes(opt.value)) { sel.value = opt.value; return; }
+      }
+      if (b.includes('ACB') && !b.includes('SEA')) { sel.value = 'ACB'; return; }
       if (b.includes('VPB') || b.includes('VPBANK')) sel.value = 'VPB';
       else if (b.includes('PGB') || b.includes('PGBANK') || b.includes('PG_BANK')) sel.value = 'PGB';
       else if (b.includes('VCB') || b.includes('VIETCOM') || b.includes('VIET_COM')) sel.value = 'VCB';
@@ -652,6 +663,17 @@
       else if (b.includes('TCB') || b.includes('TECHCOM')) sel.value = 'TCB';
       else if (b.includes('ACB')) sel.value = 'ACB';
       else sel.value = '';
+    }
+
+    function applySavedOrProfileBank(accountBank, profileId, selectId) {
+      const fromAcc = String(accountBank || '').trim();
+      if (fromAcc) {
+        matchBankOption(fromAcc, selectId);
+        const sel = document.getElementById(selectId);
+        if (sel && sel.value) return;
+      }
+      const row = rows.find((x) => x.id === profileId);
+      matchBankOption(row && row.bank, selectId);
     }
 
     function allgameLogLine(msg) {
@@ -774,7 +796,7 @@
         }
         document.getElementById('allgameStk').value = acc.account_number || '';
         document.getElementById('allgameDevice').value = acc.device || '';
-        matchBankOption(acc.bank_code || acc.bank_name, 'allgameBank');
+        applySavedOrProfileBank(acc.bank_code || acc.bank_name, allgameProfileId, 'allgameBank');
       } catch (e) {
         allgameLogLine('Khong doc duoc ban ghi cu: ' + e.message);
       }
@@ -905,7 +927,7 @@
         if (acc.withdrawPass) document.getElementById('lc79FundPw').value = acc.withdrawPass;
         document.getElementById('lc79Stk').value = acc.accountNumber || '';
         document.getElementById('lc79Device').value = acc.device || '';
-        matchBankOption(acc.bank, 'lc79Bank');
+        applySavedOrProfileBank(acc.bank, lc79ProfileId, 'lc79Bank');
       } catch (e) {
         lc79LogLine('Không đọc được bản ghi cũ: ' + e.message);
       }
@@ -1037,7 +1059,11 @@
         }
         document.getElementById('x66Stk').value = acc.account_number || '';
         document.getElementById('x66Device').value = acc.device || '';
-        matchBankOption(acc.bank_code || acc.bank_name || acc.bank, 'x66Bank');
+        applySavedOrProfileBank(
+          acc.bank_code || acc.bank_name || acc.bank,
+          xoso66ProfileId,
+          'x66Bank'
+        );
       } catch (e) {
         xoso66LogLine('Không đọc được bản ghi cũ: ' + e.message);
       }

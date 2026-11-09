@@ -1,0 +1,239 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Lì Xì Chat</title>
+  <script src="https://cdn.jsdelivr.net/npm/axios/dist/axios.min.js"></script>
+  <style>
+    :root { --blue:#3498db; --gray:#f7f8fa; --text:#2c3e50; --green:#27ae60; --red:#c0392b; }
+    body { font-family: Arial, sans-serif; background: var(--gray); margin: 0; padding: 20px; color: var(--text); }
+    h1 { margin: 0 0 14px; font-size: 1.35rem; }
+    .toolbar {
+      display: flex; flex-wrap: wrap; gap: 12px; align-items: center;
+      margin-bottom: 14px; padding: 12px 14px; background: #fff; border-radius: 8px;
+      box-shadow: 0 1px 3px rgba(0,0,0,.08);
+    }
+    .toggle-wrap { display: flex; align-items: center; gap: 10px; font-weight: 600; }
+    .toggle-btn {
+      padding: 8px 16px; border: none; border-radius: 4px; color: #fff;
+      cursor: pointer; font-size: 14px; font-weight: 600;
+    }
+    .toggle-btn.on { background: var(--green); }
+    .toggle-btn.off { background: var(--red); }
+    .toggle-btn:disabled { opacity: 0.5; cursor: wait; }
+    .hint { font-size: 13px; color: #666; }
+    .filter-bar { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin-bottom: 14px; }
+    .filter-bar label { font-weight: 600; }
+    .filter-bar input, .filter-bar select { padding: 7px 10px; border: 1px solid #ccc; border-radius: 4px; font-size: 14px; }
+    .filter-bar button {
+      padding: 7px 14px; border: none; border-radius: 4px; background: var(--blue); color: #fff;
+      cursor: pointer; font-size: 14px;
+    }
+    .filter-bar button:hover { background: #2980b9; }
+    .meta { font-size: 13px; color: #555; margin-bottom: 8px; }
+    .today-box {
+      display: inline-block; padding: 6px 12px; background: #e8f6ef; border-radius: 6px;
+      font-weight: 700; color: #1e8449; margin-right: 10px;
+    }
+    table { width: 100%; border-collapse: collapse; background: #fff; border-radius: 8px; overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,.08); }
+    th, td { border: 1px solid #e8e8e8; padding: 10px 8px; font-size: 13px; text-align: left; vertical-align: top; }
+    th { background: var(--blue); color: #fff; text-align: center; white-space: nowrap; }
+    td.num { text-align: right; font-variant-numeric: tabular-nums; }
+    td.center { text-align: center; }
+    .st-success { color: var(--green); font-weight: 700; }
+    .st-fail, .st-error { color: var(--red); font-weight: 600; }
+    .st-skip_session, .st-no_red { color: #888; }
+    #pagination { margin-top: 14px; text-align: center; }
+    #pagination button {
+      margin: 0 4px; padding: 6px 11px; border: 1px solid #ccc; background: #fff; cursor: pointer; border-radius: 4px;
+    }
+    #pagination button.active { background: var(--blue); color: #fff; border-color: var(--blue); }
+    #pagination button:disabled { opacity: 0.45; cursor: not-allowed; }
+  </style>
+</head>
+<body>
+  <h1>Lì Xì Chat</h1>
+  <p class="hint">Tự nhận lì xì phòng chat lúc phút 01 mỗi giờ (VN). Không liên quan lì xì 21h.</p>
+
+  <div class="toolbar">
+    <div class="toggle-wrap">
+      <span>Auto nhận:</span>
+      <button type="button" id="toggleBtn" class="toggle-btn off" onclick="toggleEnabled()">…</button>
+      <span id="toggleMeta" class="hint"></span>
+    </div>
+  </div>
+
+  <div class="filter-bar">
+    <label for="filterDate">Ngày</label>
+    <input id="filterDate" type="date" onchange="loadPage(1)" />
+    <label for="filterStatus">Trạng thái</label>
+    <select id="filterStatus" onchange="loadPage(1)">
+      <option value="">Tất cả</option>
+      <option value="success">success</option>
+      <option value="fail">fail</option>
+      <option value="skip_session">skip_session</option>
+      <option value="no_red">no_red</option>
+      <option value="error">error</option>
+    </select>
+    <label for="searchUsername">Username</label>
+    <input id="searchUsername" type="text" placeholder="Lọc username" style="min-width:180px;" />
+    <button type="button" onclick="loadPage(1)">Áp dụng</button>
+  </div>
+  <div class="meta" id="summary"></div>
+
+  <table>
+    <thead>
+      <tr>
+        <th>ID</th>
+        <th>Thời gian</th>
+        <th>Username</th>
+        <th>red_id</th>
+        <th>Số tiền</th>
+        <th>Trạng thái</th>
+        <th>code</th>
+        <th>msg</th>
+        <th>vn_hour</th>
+      </tr>
+    </thead>
+    <tbody id="dataBody"></tbody>
+  </table>
+
+  <div id="pagination"></div>
+
+  <script>
+    const API = '/xoso66-api';
+    const limit = 50;
+    let totalPages = 1;
+    let enabledState = false;
+
+    function todayLocalYmd() {
+      const now = new Date();
+      const y = now.getFullYear();
+      const m = String(now.getMonth() + 1).padStart(2, '0');
+      const d = String(now.getDate()).padStart(2, '0');
+      return `${y}-${m}-${d}`;
+    }
+
+    function escapeHtml(s) {
+      return String(s == null ? '' : s)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;');
+    }
+
+    function applyToggleUi(info) {
+      enabledState = Boolean(info.enabled);
+      const btn = document.getElementById('toggleBtn');
+      btn.disabled = false;
+      btn.className = 'toggle-btn ' + (enabledState ? 'on' : 'off');
+      btn.textContent = enabledState ? 'ĐANG BẬT' : 'ĐANG TẮT';
+      document.getElementById('toggleMeta').textContent =
+        `phút ${String(info.minute ?? 1).padStart(2, '0')} mỗi giờ · parallel ${info.parallel ?? 5} · ${info.profile || 'android_app'}`;
+    }
+
+    function loadEnabled() {
+      return axios.get(`${API}/api/chat-lixi/enabled`)
+        .then(res => applyToggleUi(res.data || {}))
+        .catch(err => {
+          console.error(err);
+          document.getElementById('toggleBtn').textContent = 'Lỗi tải';
+        });
+    }
+
+    function toggleEnabled() {
+      const btn = document.getElementById('toggleBtn');
+      btn.disabled = true;
+      axios.put(`${API}/api/chat-lixi/enabled`, { enabled: !enabledState })
+        .then(res => {
+          applyToggleUi(res.data || {});
+          return loadStats();
+        })
+        .catch(err => {
+          console.error(err);
+          alert('Không đổi được trạng thái: ' + (err.response?.data?.detail || err.message));
+          btn.disabled = false;
+        });
+    }
+
+    function loadStats() {
+      return axios.get(`${API}/api/chat-lixi/stats`)
+        .then(res => {
+          const d = res.data || {};
+          applyToggleUi(d);
+          return d;
+        })
+        .catch(() => ({}));
+    }
+
+    function loadPage(page) {
+      const date = document.getElementById('filterDate').value.trim();
+      const username = document.getElementById('searchUsername').value.trim();
+      const status = document.getElementById('filterStatus').value.trim();
+      const params = new URLSearchParams({ page: String(page), limit: String(limit) });
+      if (date) params.set('date', date);
+      if (username) params.set('username', username);
+      if (status) params.set('status', status);
+
+      Promise.all([
+        axios.get(`${API}/api/chat-lixi/claims?${params}`),
+        axios.get(`${API}/api/chat-lixi/stats`),
+      ]).then(([claimsRes, statsRes]) => {
+        const data = claimsRes.data || {};
+        const stats = statsRes.data || {};
+        applyToggleUi(stats);
+        const { total, page: p, rows, total_amount_filtered, total_amount_all } = data;
+        totalPages = Math.max(1, Math.ceil((total || 0) / limit));
+        const todayAmt = Number(stats.today_amount) || 0;
+        const todayN = Number(stats.today_success_count) || 0;
+        document.getElementById('summary').innerHTML =
+          `<span class="today-box">Hôm nay: +${todayAmt.toLocaleString()}đ (${todayN} lần thành công)</span>` +
+          `Tổng ${Number(total || 0).toLocaleString()} bản ghi — trang ${p}/${totalPages} — ` +
+          `Filter: ${(Number(total_amount_filtered) || 0).toLocaleString()}đ — ` +
+          `All success: ${(Number(total_amount_all) || 0).toLocaleString()}đ`;
+
+        const tbody = document.getElementById('dataBody');
+        tbody.innerHTML = '';
+        (rows || []).forEach(r => {
+          const tr = document.createElement('tr');
+          const st = String(r.status || '');
+          tr.innerHTML = `
+            <td class="center">${r.id}</td>
+            <td class="center">${escapeHtml(r.created_at)}</td>
+            <td>${escapeHtml(r.username)}</td>
+            <td class="center">${r.red_id != null ? r.red_id : ''}</td>
+            <td class="num">${Number(r.money || 0).toLocaleString()}</td>
+            <td class="center st-${escapeHtml(st)}">${escapeHtml(st)}</td>
+            <td class="center">${r.code != null ? r.code : ''}</td>
+            <td>${escapeHtml(r.msg)}</td>
+            <td class="center">${escapeHtml(r.vn_hour)}</td>
+          `;
+          tbody.appendChild(tr);
+        });
+
+        const pag = document.getElementById('pagination');
+        pag.innerHTML = '';
+        const addBtn = (label, targetPage, opts = {}) => {
+          const btn = document.createElement('button');
+          btn.textContent = label;
+          if (opts.active) btn.classList.add('active');
+          if (opts.disabled) btn.disabled = true;
+          else btn.onclick = () => loadPage(targetPage);
+          pag.appendChild(btn);
+        };
+        addBtn('« Trước', p - 1, { disabled: p <= 1 });
+        const windowSize = 7;
+        let start = Math.max(1, p - Math.floor(windowSize / 2));
+        let end = Math.min(totalPages, start + windowSize - 1);
+        if (end - start + 1 < windowSize) start = Math.max(1, end - windowSize + 1);
+        for (let i = start; i <= end; i++) addBtn(String(i), i, { active: i === p });
+        addBtn('Sau »', p + 1, { disabled: p >= totalPages });
+      }).catch(err => console.error(err));
+    }
+
+    document.getElementById('filterDate').value = todayLocalYmd();
+    loadEnabled().then(() => loadPage(1));
+  </script>
+</body>
+</html>
